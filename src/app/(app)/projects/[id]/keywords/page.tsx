@@ -2,8 +2,9 @@ export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { projects } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { projects, keywords } from "@/db/schema";
+import { eq, desc } from "drizzle-orm";
+import { KeywordsTable } from "@/components/keywords/keywords-table";
 
 export default async function ProjectKeywordsPage({
   params,
@@ -18,6 +19,12 @@ export default async function ProjectKeywordsPage({
 
   if (!project) notFound();
 
+  const rows = await db
+    .select()
+    .from(keywords)
+    .where(eq(keywords.projectId, id))
+    .orderBy(desc(keywords.createdAt));
+
   return (
     <div className="space-y-6">
       <div>
@@ -25,11 +32,7 @@ export default async function ProjectKeywordsPage({
           {project.name} — Keywords
         </h1>
       </div>
-      <div className="rounded-lg border border-dashed border-border p-8 text-center">
-        <p className="text-sm text-muted-foreground">
-          Keywords coming in Phase 5
-        </p>
-      </div>
+      <KeywordsTable keywords={rows} projectId={id} />
     </div>
   );
 }
