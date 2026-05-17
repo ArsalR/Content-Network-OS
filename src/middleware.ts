@@ -13,7 +13,7 @@ export async function middleware(request: NextRequest) {
   );
 
   const { pathname } = request.nextUrl;
-  const isAuthRoute = pathname.startsWith("/login");
+  const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/setup");
   const isAppRoute =
     !isAuthRoute && !pathname.startsWith("/api");
 

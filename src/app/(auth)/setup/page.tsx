@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
 
-export default function LoginPage() {
+export default function SetupPage() {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -19,9 +20,13 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const result = await authClient.signIn.email({ email, password });
+      const result = await authClient.signUp.email({ name, email, password });
       if (result.error) {
-        setError(result.error.message ?? "Sign in failed. Please try again.");
+        if (result.error.status === 403) {
+          setError("An account already exists. Please sign in instead.");
+        } else {
+          setError(result.error.message ?? "Setup failed. Please try again.");
+        }
       } else {
         window.location.href = "/";
       }
@@ -32,10 +37,6 @@ export default function LoginPage() {
     }
   }
 
-  function handleGoogleClick() {
-    setError("Google OAuth — coming soon. Use email/password to sign in.");
-  }
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6">
@@ -44,11 +45,25 @@ export default function LoginPage() {
             Content Network OS
           </h1>
           <p className="text-sm text-muted-foreground">
-            Sign in to your account
+            Create your account to get started
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Name</Label>
+            <Input
+              id="name"
+              type="text"
+              placeholder="Your name"
+              autoComplete="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              disabled={loading}
+            />
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -68,7 +83,7 @@ export default function LoginPage() {
             <Input
               id="password"
               type="password"
-              autoComplete="current-password"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -83,32 +98,14 @@ export default function LoginPage() {
           )}
 
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? "Creating account…" : "Create account"}
           </Button>
         </form>
 
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-background px-2 text-muted-foreground">or</span>
-          </div>
-        </div>
-
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full cursor-not-allowed opacity-60"
-          onClick={handleGoogleClick}
-        >
-          Continue with Google
-        </Button>
-
         <p className="text-center text-sm text-muted-foreground">
-          First time here?{" "}
-          <Link href="/setup" className="underline underline-offset-4 hover:text-primary">
-            Set up your account
+          Already have an account?{" "}
+          <Link href="/login" className="underline underline-offset-4 hover:text-primary">
+            Sign in
           </Link>
         </p>
       </div>
