@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { Trash2, CheckCheck, Wand2 } from "lucide-react";
+import { Trash2, CheckCheck, Wand2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,7 +13,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { toast } from "sonner";
 import { deleteBrief, markBriefReady, generateBriefFromKeyword } from "@/actions/briefs";
+import { enqueueGeneration } from "@/actions/drafts";
 
 type BriefStatus = "draft" | "ready" | "generating" | "generated" | "published";
 
@@ -80,6 +82,25 @@ export function BriefList({ briefs, projectId }: Props) {
       const result = await generateBriefFromKeyword(brief.keywordId!, projectId);
       if (!result.ok) {
         setErrors((prev) => ({ ...prev, [brief.id]: result.error }));
+      }
+      setPendingId(null);
+    });
+  }
+
+  function handleGenerateDraft(brief: Brief) {
+    setPendingId(brief.id);
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[brief.id];
+      return next;
+    });
+    startTransition(async () => {
+      const result = await enqueueGeneration(brief.id);
+      if (result.ok) {
+        toast.success("Draft queued! Generation will complete shortly.");
+      } else {
+        setErrors((prev) => ({ ...prev, [brief.id]: result.error }));
+        toast.error(result.error);
       }
       setPendingId(null);
     });
@@ -164,6 +185,18 @@ export function BriefList({ briefs, projectId }: Props) {
                     >
                       <Wand2 className="h-3 w-3" />
                       {pendingId === brief.id ? "…" : "Gen"}
+                    </Button>
+                  )}
+                  {brief.status === "ready" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 px-2 text-xs"
+                      disabled={pendingId === brief.id}
+                      onClick={() => handleGenerateDraft(brief)}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      {pendingId === brief.id ? "Queuing…" : "Draft"}
                     </Button>
                   )}
                   <Button
