@@ -19,7 +19,9 @@ import {
   approveDraft,
   rejectDraft,
   scheduleDraft,
+  publishDraftNow,
 } from "@/actions/drafts";
+import { CoverImagePicker } from "./cover-image-picker";
 
 type DraftStatus =
   | "generating"
@@ -218,6 +220,7 @@ export function EditorSidebar({
             className="text-sm h-8"
           />
         </div>
+        <CoverImagePicker onSelect={(url) => onFieldChange("coverImageUrl", url)} />
       </div>
 
       {/* Publishing */}
@@ -336,10 +339,18 @@ export function EditorSidebar({
               className="w-full"
               disabled={isPending}
               onClick={() =>
-                toast.info("Publishing coming in Phase 11")
+                startTransition(async () => {
+                  const result = await publishDraftNow(draftId);
+                  if (result.ok) {
+                    toast.success("Publishing queued!");
+                    window.location.reload();
+                  } else {
+                    toast.error(result.error);
+                  }
+                })
               }
             >
-              Publish Now
+              {isPending ? "Publishing…" : "Publish Now"}
             </Button>
           </div>
         )}

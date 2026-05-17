@@ -5,6 +5,7 @@ import { drafts, briefs, jobs } from "@/db/schema";
 import { inngest } from "@/lib/inngest";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { searchPhotos } from "@/lib/pexels-client";
 
 export async function enqueueGeneration(
   briefId: string
@@ -172,6 +173,44 @@ export async function scheduleDraft(
   }
 }
 
+export async function publishDraftNow(
+  id: string
+): Promise<{ ok: true; data: { jobId: string } } | { ok: false; error: string }> {
+  try {
+    const draft = await db.query.drafts.findFirst({ where: eq(drafts.id, id) });
+    if (!draft) return { ok: false, error: "Draft not found" };
+    if (!draft.targetSiteId) return { ok: false, error: "Draft has no target site assigned" };
+
+    const allowedStatuses = ["approved", "scheduled"] as const;
+    if (!(allowedStatuses as readonly string[]).includes(draft.status)) {
+      return {
+        ok: false,
+        error: `Draft must be approved or scheduled to publish (current: ${draft.status})`,
+      };
+    }
+
+    const [job] = await db
+      .insert(jobs)
+      .values({ kind: "publish-draft", status: "queued", inputId: id })
+      .returning({ id: jobs.id });
+
+    await inngest.send({ name: "draft/publish", data: { draftId: id, jobId: job.id } });
+
+    await db
+      .update(drafts)
+      .set({ status: "publishing", updatedAt: new Date() })
+      .where(eq(drafts.id, id));
+
+    revalidatePath(`/drafts/${id}`);
+    revalidatePath("/drafts");
+
+    return { ok: true, data: { jobId: job.id } };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Failed to publish draft";
+    return { ok: false, error };
+  }
+}
+
 export async function moveDraftToReview(
   id: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -188,5 +227,30 @@ export async function moveDraftToReview(
   } catch (err) {
     const error = err instanceof Error ? err.message : "Failed to move draft to review";
     return { ok: false, error };
+  }
+}
+
+export async function searchPexelsPhotos(
+  query: string
+): Promise<
+  | { ok: true; data: { photos: Array<{ url: string; thumb: string; photographer: string }> } }
+  | { ok: false; error: string }
+> {
+  try {
+    const result = await searchPhotos(query, 12);
+    if (!result.ok) return { ok: false, error: result.error };
+
+    const photos = result.photos.map((p) => ({
+      url: p.src.large,
+      thumb: p.src.medium,
+      photographer: p.photographer,
+    }));
+
+    return { ok: true, data: { photos } };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to search photos",
+    };
   }
 }
