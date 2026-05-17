@@ -51,8 +51,8 @@ export async function generate(
     });
 
     const durationMs = Date.now() - startedAt;
-    const tokensIn = result.usage.promptTokens;
-    const tokensOut = result.usage.completionTokens;
+    const tokensIn = result.usage.inputTokens ?? 0;
+    const tokensOut = result.usage.outputTokens ?? 0;
     const costUsd = computeCostUsd(modelName, tokensIn, tokensOut);
 
     await db.insert(apiCalls).values({
