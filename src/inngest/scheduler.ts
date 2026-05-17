@@ -4,8 +4,7 @@ import { drafts, jobs } from "@/db/schema";
 import { eq, lte, and } from "drizzle-orm";
 
 export const scheduledPublisher = inngest.createFunction(
-  { id: "scheduled-publisher", name: "Scheduled Publisher" },
-  { cron: "*/5 * * * *" },
+  { id: "scheduled-publisher", name: "Scheduled Publisher", triggers: [{ cron: "*/5 * * * *" }] },
   async ({ step }) => {
     const due = await step.run("find-due-drafts", async () => {
       return db.query.drafts.findMany({
