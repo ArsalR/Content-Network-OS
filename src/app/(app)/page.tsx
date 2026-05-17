@@ -1,30 +1,57 @@
+export const dynamic = "force-dynamic";
+
 import { Globe, FolderOpen, FileText, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { db } from "@/lib/db";
+import { sites, projects, drafts } from "@/db/schema";
+import { eq, and, gte, count } from "drizzle-orm";
+import { startOfMonth } from "date-fns";
 
-const stats = [
-  {
-    label: "Total Sites",
-    value: 0,
-    icon: Globe,
-  },
-  {
-    label: "Active Projects",
-    value: 0,
-    icon: FolderOpen,
-  },
-  {
-    label: "Drafts in Review",
-    value: 0,
-    icon: FileText,
-  },
-  {
-    label: "Published This Month",
-    value: 0,
-    icon: TrendingUp,
-  },
-];
+export default async function DashboardPage() {
+  const monthStart = startOfMonth(new Date());
 
-export default function DashboardPage() {
+  const [siteCount] = await db.select({ count: count() }).from(sites);
+  const [activeProjectCount] = await db
+    .select({ count: count() })
+    .from(projects)
+    .where(eq(projects.status, "active"));
+  const [draftsInReviewCount] = await db
+    .select({ count: count() })
+    .from(drafts)
+    .where(eq(drafts.status, "review"));
+  const [publishedThisMonthCount] = await db
+    .select({ count: count() })
+    .from(drafts)
+    .where(
+      and(
+        eq(drafts.status, "published"),
+        gte(drafts.publishedAt, monthStart)
+      )
+    );
+
+  const stats = [
+    {
+      label: "Total Sites",
+      value: siteCount?.count ?? 0,
+      icon: Globe,
+    },
+    {
+      label: "Active Projects",
+      value: activeProjectCount?.count ?? 0,
+      icon: FolderOpen,
+    },
+    {
+      label: "Drafts in Review",
+      value: draftsInReviewCount?.count ?? 0,
+      icon: FileText,
+    },
+    {
+      label: "Published This Month",
+      value: publishedThisMonthCount?.count ?? 0,
+      icon: TrendingUp,
+    },
+  ];
+
   return (
     <div className="space-y-8">
       <div>
