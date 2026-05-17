@@ -1,4 +1,5 @@
-import { env } from "@/lib/env";
+export const dynamic = "force-dynamic";
+
 import { CheckCircle2, XCircle } from "lucide-react";
 
 interface KeyInfo {
@@ -8,16 +9,18 @@ interface KeyInfo {
 }
 
 export default function ApiKeysPage() {
+  // Read env vars directly so this page stays server-only without triggering
+  // the Zod schema validation in lib/env.ts during build-time static collection.
   const keys: KeyInfo[] = [
     {
       label: "OpenAI API Key",
       envVar: "OPENAI_API_KEY",
-      isSet: env.OPENAI_API_KEY !== "",
+      isSet: (process.env.OPENAI_API_KEY ?? "") !== "",
     },
     {
       label: "Pexels API Key",
       envVar: "PEXELS_API_KEY",
-      isSet: env.PEXELS_API_KEY !== "",
+      isSet: (process.env.PEXELS_API_KEY ?? "") !== "",
     },
   ];
 
