@@ -21,14 +21,16 @@ const STATUS_OPTIONS = [
 
 interface Props {
   selectedIds: string[];
+  projectId: string;
   onClear: () => void;
 }
 
-export function BulkActionsBar({ selectedIds, onClear }: Props) {
+export function BulkActionsBar({ selectedIds, projectId, onClear }: Props) {
   const [clusterValue, setClusterValue] = useState("");
   const [showClusterInput, setShowClusterInput] = useState(false);
   const [showStatusSelect, setShowStatusSelect] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [briefProgress, setBriefProgress] = useState<{ done: number; total: number } | null>(null);
 
   function handleDelete() {
     startTransition(async () => {
@@ -47,6 +49,19 @@ export function BulkActionsBar({ selectedIds, onClear }: Props) {
       await bulkAssignCluster(selectedIds, clusterValue);
       setClusterValue("");
       setShowClusterInput(false);
+      onClear();
+    });
+  }
+
+  function handleGenerateBriefs() {
+    startTransition(async () => {
+      setBriefProgress({ done: 0, total: selectedIds.length });
+      for (let i = 0; i < selectedIds.length; i++) {
+        await generateBriefFromKeyword(selectedIds[i], projectId);
+        setBriefProgress({ done: i + 1, total: selectedIds.length });
+      }
+      toast.success(`Generated ${selectedIds.length} brief${selectedIds.length !== 1 ? "s" : ""}`);
+      setBriefProgress(null);
       onClear();
     });
   }
@@ -136,6 +151,21 @@ export function BulkActionsBar({ selectedIds, onClear }: Props) {
           >
             Change Status
           </Button>
+          {briefProgress ? (
+            <span className="text-xs text-muted-foreground">
+              Generating {briefProgress.done}/{briefProgress.total} briefs…
+            </span>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleGenerateBriefs}
+              disabled={isPending}
+              className="h-7 text-xs"
+            >
+              Generate Briefs
+            </Button>
+          )}
           <Button
             size="sm"
             variant="destructive"

@@ -217,6 +217,7 @@ export function KeywordsTable({ keywords, projectId }: Props) {
       {selectedIds.size > 0 && (
         <BulkActionsBar
           selectedIds={[...selectedIds]}
+          projectId={projectId}
           onClear={() => setSelectedIds(new Set())}
         />
       )}
