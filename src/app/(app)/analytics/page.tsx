@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { CostAlertBanner } from "@/components/analytics/cost-alert-banner";
 
 function fmtUsd(val: string | null): string {
   const n = parseFloat(val ?? "0");
@@ -80,6 +81,8 @@ export default async function AnalyticsPage() {
           API usage and content metrics
         </p>
       </div>
+
+      <CostAlertBanner monthSpend={monthSpend} />
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
