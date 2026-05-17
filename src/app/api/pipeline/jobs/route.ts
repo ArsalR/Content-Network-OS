@@ -1,9 +1,10 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { jobs } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
-
-export const dynamic = "force-dynamic";
 
 export async function GET() {
   const rows = await db

@@ -1,7 +1,8 @@
+export const dynamic = "force-dynamic";
+
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { seedDefaults } from "@/lib/seed";
 import { Toaster } from "@/components/ui/sonner";
 
 const geistSans = Geist({
@@ -19,12 +20,11 @@ export const metadata: Metadata = {
   description: "Your AI content production studio",
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await seedDefaults().catch(() => {});
   return (
     <html lang="en" className="dark">
       <body
