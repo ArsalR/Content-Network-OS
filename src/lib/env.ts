@@ -8,6 +8,8 @@ const envSchema = z.object({
   PEXELS_API_KEY: z.string().optional().default(""),
   INNGEST_EVENT_KEY: z.string().optional().default(""),
   INNGEST_SIGNING_KEY: z.string().optional().default(""),
+  GEMINI_API_KEY: z.string().optional().default(""),
+  DALLE_IMAGE_SIZE: z.string().optional().default("1024x1024"),
   ENCRYPTION_KEY: z.string().min(1),
 });
 

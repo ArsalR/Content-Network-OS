@@ -16,6 +16,8 @@ const SiteInput = z.object({
   defaultCategory: z.string().optional(),
   defaultTone: z.string().optional(),
   notes: z.string().optional(),
+  imageProvider: z.enum(["dalle", "gemini"]).optional().default("dalle"),
+  imageStyle: z.string().optional(),
 });
 
 export async function createSite(
@@ -29,6 +31,8 @@ export async function createSite(
     defaultCategory: formData.get("defaultCategory") || undefined,
     defaultTone: formData.get("defaultTone") || undefined,
     notes: formData.get("notes") || undefined,
+    imageProvider: formData.get("imageProvider") || undefined,
+    imageStyle: formData.get("imageStyle") || undefined,
   });
 
   if (!parsed.success) {
@@ -68,6 +72,8 @@ export async function updateSite(
     defaultCategory: formData.get("defaultCategory") || undefined,
     defaultTone: formData.get("defaultTone") || undefined,
     notes: formData.get("notes") || undefined,
+    imageProvider: formData.get("imageProvider") || undefined,
+    imageStyle: formData.get("imageStyle") || undefined,
   });
 
   if (!parsed.success) {

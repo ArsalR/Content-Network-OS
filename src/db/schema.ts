@@ -17,6 +17,8 @@ export const siteStatusEnum = pgEnum("site_status", [
   "error",
 ]);
 
+export const imageProviderEnum = pgEnum("image_provider_type", ["dalle", "gemini"]);
+
 export const projectStatusEnum = pgEnum("project_status", [
   "active",
   "archived",
@@ -141,6 +143,8 @@ export const sites = pgTable("sites", {
   defaultCategory: text("default_category"),
   defaultTone: text("default_tone"),
   notes: text("notes"),
+  imageProvider: imageProviderEnum("image_provider").default("dalle").notNull(),
+  imageStyle: text("image_style"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -22,6 +22,7 @@ export async function generate(
     model?: string;
     driverId?: string;
     systemPrompt?: string;
+    rawText?: boolean;
   }
 ): Promise<GenerateResult> {
   if (!env.OPENAI_API_KEY) {
@@ -45,9 +46,13 @@ export async function generate(
           : []),
         { role: "user" as const, content: prompt },
       ],
-      providerOptions: {
-        openai: { response_format: { type: "json_object" } },
-      },
+      ...(options?.rawText
+        ? {}
+        : {
+            providerOptions: {
+              openai: { response_format: { type: "json_object" } },
+            },
+          }),
     });
 
     const durationMs = Date.now() - startedAt;

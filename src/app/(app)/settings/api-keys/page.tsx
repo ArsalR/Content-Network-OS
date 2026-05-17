@@ -22,6 +22,11 @@ export default function ApiKeysPage() {
       envVar: "PEXELS_API_KEY",
       isSet: (process.env.PEXELS_API_KEY ?? "") !== "",
     },
+    {
+      label: "Gemini API Key",
+      envVar: "GEMINI_API_KEY",
+      isSet: (process.env.GEMINI_API_KEY ?? "") !== "",
+    },
   ];
 
   return (

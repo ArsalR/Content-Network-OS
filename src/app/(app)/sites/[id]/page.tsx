@@ -34,6 +34,8 @@ export default async function SiteEditPage({
           defaultCategory: site.defaultCategory,
           defaultTone: site.defaultTone,
           notes: site.notes,
+          imageProvider: site.imageProvider,
+          imageStyle: site.imageStyle,
         }}
       />
     </div>

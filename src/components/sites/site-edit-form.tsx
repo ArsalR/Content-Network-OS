@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { updateSite } from "@/actions/sites";
@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TestConnectionButton } from "@/components/sites/test-connection-button";
 
 type Site = {
@@ -18,6 +25,8 @@ type Site = {
   defaultCategory: string | null;
   defaultTone: string | null;
   notes: string | null;
+  imageProvider: "dalle" | "gemini";
+  imageStyle: string | null;
 };
 
 type ActionState =
@@ -38,6 +47,9 @@ function buildAction(id: string) {
 
 export function SiteEditForm({ site }: { site: Site }) {
   const router = useRouter();
+  const [imageProvider, setImageProvider] = useState<"dalle" | "gemini">(
+    site.imageProvider
+  );
   const [state, formAction, isPending] = useActionState(
     buildAction(site.id),
     initialState
@@ -65,7 +77,12 @@ export function SiteEditForm({ site }: { site: Site }) {
 
         <div className="space-y-2">
           <Label htmlFor="hostname">Hostname</Label>
-          <Input id="hostname" name="hostname" defaultValue={site.hostname} required />
+          <Input
+            id="hostname"
+            name="hostname"
+            defaultValue={site.hostname}
+            required
+          />
         </div>
 
         <div className="space-y-2">
@@ -120,6 +137,56 @@ export function SiteEditForm({ site }: { site: Site }) {
           />
         </div>
 
+        {/* Image generation settings */}
+        <div className="border-t border-border pt-4 space-y-4">
+          <h3 className="text-sm font-medium text-foreground">
+            Image Generation
+          </h3>
+
+          <div className="space-y-2">
+            <Label>Image Provider</Label>
+            {/* Hidden input carries the value into FormData */}
+            <input
+              type="hidden"
+              name="imageProvider"
+              value={imageProvider}
+            />
+            <Select
+              value={imageProvider}
+              onValueChange={(v) =>
+                setImageProvider(v as "dalle" | "gemini")
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="dalle">DALL-E 3 (OpenAI)</SelectItem>
+                <SelectItem value="gemini">Gemini Imagen (Google)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Provider used when generating inline article images.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="imageStyle">Image Style Prefix (optional)</Label>
+            <Input
+              id="imageStyle"
+              name="imageStyle"
+              defaultValue={site.imageStyle ?? ""}
+              placeholder="Pinterest-style, vibrant colors,"
+            />
+            <p className="text-xs text-muted-foreground">
+              Text prepended to every image prompt, e.g.{" "}
+              <span className="font-mono">
+                Pinterest-style, vibrant colors,
+              </span>
+            </p>
+          </div>
+        </div>
+
         <div className="flex gap-3">
           <Button type="submit" disabled={isPending}>
             {isPending ? "Saving..." : "Save changes"}
@@ -128,7 +195,9 @@ export function SiteEditForm({ site }: { site: Site }) {
       </form>
 
       <div className="border-t border-border pt-6">
-        <h3 className="mb-3 text-sm font-medium text-foreground">Connection</h3>
+        <h3 className="mb-3 text-sm font-medium text-foreground">
+          Connection
+        </h3>
         <TestConnectionButton siteId={site.id} />
       </div>
     </div>
