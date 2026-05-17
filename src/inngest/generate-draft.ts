@@ -7,10 +7,6 @@ import { eq, and } from "drizzle-orm";
 import { marked } from "marked";
 import { z } from "zod";
 
-type GenerateDraftEvent = {
-  data: { briefId: string; jobId: string };
-};
-
 const DraftResponseSchema = z.object({
   title: z.string(),
   slug: z.string(),
@@ -22,10 +18,13 @@ const DraftResponseSchema = z.object({
 });
 
 export const generateDraft = inngest.createFunction(
-  { id: "generate-draft", name: "Generate Draft" },
-  { event: "draft/generate" },
-  async ({ event, step }: { event: GenerateDraftEvent; step: { run: <T>(name: string, fn: () => Promise<T>) => Promise<T> } }) => {
-    const { briefId, jobId } = event.data;
+  {
+    id: "generate-draft",
+    name: "Generate Draft",
+    triggers: [{ event: "draft/generate" }],
+  },
+  async ({ event, step }) => {
+    const { briefId, jobId } = event.data as { briefId: string; jobId: string };
 
     // 1. Mark job as running
     await step.run("mark-job-running", async () => {
