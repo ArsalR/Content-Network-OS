@@ -13,7 +13,18 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z.string().min(1),
 });
 
-const parsed = envSchema.safeParse(process.env);
+const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
+
+const parsed = envSchema.safeParse(
+  isBuildPhase
+    ? {
+        DATABASE_URL: "postgresql://build-placeholder",
+        BETTER_AUTH_SECRET: "build-placeholder",
+        BETTER_AUTH_URL: "http://localhost:3000",
+        ENCRYPTION_KEY: "build-placeholder",
+      }
+    : process.env
+);
 
 if (!parsed.success) {
   const missing = parsed.error.errors
