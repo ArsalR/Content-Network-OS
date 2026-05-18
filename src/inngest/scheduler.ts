@@ -18,8 +18,13 @@ export const scheduledPublisher = inngest.createFunction(
       return { processed: 0 };
     }
 
-    await step.run("enqueue-publishes", async () => {
-      for (const draft of due) {
+    for (const draft of due) {
+      await step.run(`enqueue-publish-${draft.id}`, async () => {
+        await db
+          .update(drafts)
+          .set({ status: "publishing" })
+          .where(eq(drafts.id, draft.id));
+
         const [job] = await db
           .insert(jobs)
           .values({
@@ -33,8 +38,8 @@ export const scheduledPublisher = inngest.createFunction(
           name: "draft/publish",
           data: { draftId: draft.id, jobId: job.id },
         });
-      }
-    });
+      });
+    }
 
     return { processed: due.length };
   }

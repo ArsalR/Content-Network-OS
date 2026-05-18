@@ -241,7 +241,8 @@ export async function generateBriefFromKeyword(
 
     let parsed: z.infer<typeof briefResponseSchema>;
     try {
-      const raw = JSON.parse(genResult.text) as unknown;
+      const cleaned = genResult.text.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+      const raw = JSON.parse(cleaned) as unknown;
       parsed = briefResponseSchema.parse(raw);
     } catch {
       return { ok: false, error: "Failed to parse AI response as valid brief JSON" };

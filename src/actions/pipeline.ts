@@ -24,37 +24,47 @@ export async function runPipeline(
     return { ok: false, error: "Maximum 50 keywords per run" };
 
   const jobIds: string[] = [];
+  const errors: string[] = [];
 
   for (const keyword of input.keywords) {
     const kw = keyword.trim();
     if (!kw) continue;
 
-    const [job] = await db
-      .insert(jobs)
-      .values({
-        kind: "generate-draft-with-images",
-        status: "queued",
-        inputId: `${input.siteId}:${kw}`,
-      })
-      .returning({ id: jobs.id });
+    try {
+      const [job] = await db
+        .insert(jobs)
+        .values({
+          kind: "generate-draft-with-images",
+          status: "queued",
+          inputId: `${input.siteId}:${kw}`,
+        })
+        .returning({ id: jobs.id });
 
-    await inngest.send({
-      name: "draft/generate-with-images",
-      data: {
-        jobId: job!.id,
-        keyword: kw,
-        siteId: input.siteId,
-        projectId: input.projectId,
-        articleType: input.articleType,
-        toneId: input.toneId,
-        wordCount: input.wordCount,
-      },
-    });
+      await inngest.send({
+        name: "draft/generate-with-images",
+        data: {
+          jobId: job!.id,
+          keyword: kw,
+          siteId: input.siteId,
+          projectId: input.projectId,
+          articleType: input.articleType,
+          toneId: input.toneId,
+          wordCount: input.wordCount,
+        },
+      });
 
-    jobIds.push(job!.id);
+      jobIds.push(job!.id);
+    } catch (err) {
+      errors.push(`"${kw}": ${err instanceof Error ? err.message : "unknown error"}`);
+    }
   }
 
   revalidatePath("/pipeline");
   revalidatePath("/drafts");
+
+  if (jobIds.length === 0 && errors.length > 0) {
+    return { ok: false, error: `All keywords failed: ${errors.join("; ")}` };
+  }
+
   return { ok: true, data: { jobIds, count: jobIds.length } };
 }

@@ -21,7 +21,7 @@ const parsed = envSchema.safeParse(
         DATABASE_URL: "postgresql://build-placeholder",
         BETTER_AUTH_SECRET: "build-placeholder",
         BETTER_AUTH_URL: "http://localhost:3000",
-        ENCRYPTION_KEY: "build-placeholder",
+        ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       }
     : process.env
 );

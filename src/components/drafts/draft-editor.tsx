@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { updateDraft } from "@/actions/drafts";
@@ -108,6 +108,12 @@ export function DraftEditor({
       void saveNow(editorContentRef.current);
     }, 2000);
   }, [saveNow]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
 
   const editor = useEditor({
     extensions: [StarterKit],

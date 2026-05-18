@@ -2,6 +2,9 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { env } from "@/lib/env";
 
 const KEY = Buffer.from(env.ENCRYPTION_KEY, "base64");
+if (KEY.length !== 32) {
+  throw new Error(`ENCRYPTION_KEY must decode to exactly 32 bytes (got ${KEY.length}). Re-generate with: openssl rand -base64 32`);
+}
 
 export function encrypt(plaintext: string): string {
   const iv = randomBytes(12);

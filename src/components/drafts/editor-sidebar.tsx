@@ -19,6 +19,7 @@ import {
   approveDraft,
   rejectDraft,
   scheduleDraft,
+  unscheduleDraft,
   publishDraftNow,
 } from "@/actions/drafts";
 import { CoverImagePicker } from "./cover-image-picker";
@@ -326,7 +327,7 @@ export function EditorSidebar({
               disabled={isPending || !scheduleDate}
               onClick={() =>
                 handleAction(
-                  () => scheduleDraft(draftId, scheduleDate),
+                  () => scheduleDraft(draftId, new Date(scheduleDate).toISOString()),
                   "Draft scheduled"
                 )
               }
@@ -362,7 +363,7 @@ export function EditorSidebar({
             className="w-full"
             disabled={isPending}
             onClick={() =>
-              handleAction(() => approveDraft(draftId), "Schedule cancelled")
+              handleAction(() => unscheduleDraft(draftId), "Schedule cancelled")
             }
           >
             Cancel Schedule

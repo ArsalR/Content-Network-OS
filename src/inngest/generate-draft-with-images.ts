@@ -118,8 +118,10 @@ Output full Markdown only. No JSON, no preamble.`;
     // 5. Extract image prompts
     const imagePrompts = extractImagePrompts(articleMarkdown);
 
-    // 6. Decrypt site API key once
-    const decryptedApiKey = decrypt(site.apiKey);
+    // 6. Decrypt site API key inside a step so it survives retries
+    const decryptedApiKey = await step.run("decrypt-api-key", async () => {
+      return decrypt(site.apiKey);
+    });
 
     // 7. Generate + upload images, replace prompt lines
     let processedMarkdown = articleMarkdown;

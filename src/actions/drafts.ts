@@ -154,6 +154,12 @@ export async function scheduleDraft(
   scheduledFor: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
+    const draft = await db.query.drafts.findFirst({ where: eq(drafts.id, id) });
+    if (!draft) return { ok: false, error: "Draft not found" };
+    if (draft.status !== "approved") {
+      return { ok: false, error: `Only approved drafts can be scheduled (current: ${draft.status})` };
+    }
+
     await db
       .update(drafts)
       .set({
@@ -169,6 +175,25 @@ export async function scheduleDraft(
     return { ok: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : "Failed to schedule draft";
+    return { ok: false, error };
+  }
+}
+
+export async function unscheduleDraft(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await db
+      .update(drafts)
+      .set({ status: "approved", scheduledFor: null, updatedAt: new Date() })
+      .where(eq(drafts.id, id));
+
+    revalidatePath(`/drafts/${id}`);
+    revalidatePath("/drafts");
+
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Failed to cancel schedule";
     return { ok: false, error };
   }
 }

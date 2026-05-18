@@ -56,11 +56,19 @@ export function BulkActionsBar({ selectedIds, projectId, onClear }: Props) {
   function handleGenerateBriefs() {
     startTransition(async () => {
       setBriefProgress({ done: 0, total: selectedIds.length });
+      let succeeded = 0;
       for (let i = 0; i < selectedIds.length; i++) {
-        await generateBriefFromKeyword(selectedIds[i], projectId);
+        const result = await generateBriefFromKeyword(selectedIds[i], projectId);
+        if (result.ok) {
+          succeeded++;
+        } else {
+          toast.error(`Brief failed: ${result.error}`);
+        }
         setBriefProgress({ done: i + 1, total: selectedIds.length });
       }
-      toast.success(`Generated ${selectedIds.length} brief${selectedIds.length !== 1 ? "s" : ""}`);
+      if (succeeded > 0) {
+        toast.success(`Generated ${succeeded} brief${succeeded !== 1 ? "s" : ""}`);
+      }
       setBriefProgress(null);
       onClear();
     });

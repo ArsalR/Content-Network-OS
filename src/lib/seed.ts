@@ -21,9 +21,7 @@ Outline:
 
 {{#faqQuestions}}
 Include an FAQ section at the end answering these questions:
-{{#faqQuestions}}
 - {{.}}
-{{/faqQuestions}}
 {{/faqQuestions}}
 
 Output strict JSON only, matching this schema:

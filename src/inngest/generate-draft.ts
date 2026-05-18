@@ -101,7 +101,8 @@ Return only valid JSON.`;
 
       // 5. Parse JSON response with Zod
       const parsed = await step.run("parse-response", async () => {
-        const raw = JSON.parse(result.text) as unknown;
+        const cleaned = result.text.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+        const raw = JSON.parse(cleaned) as unknown;
         return DraftResponseSchema.parse(raw);
       });
 

@@ -4,12 +4,17 @@ import { seedDefaults } from "@/lib/seed";
 
 export const dynamic = "force-dynamic";
 
+let seeded = false;
+
 export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  await seedDefaults().catch(() => {});
+  if (!seeded) {
+    await seedDefaults().catch(() => {});
+    seeded = true;
+  }
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
