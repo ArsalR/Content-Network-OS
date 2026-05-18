@@ -21,12 +21,12 @@ export default function LoginPage() {
     try {
       const result = await authClient.signIn.email({ email, password });
       if (result.error) {
-        setError(result.error.message ?? "Sign in failed. Please try again.");
+        setError(result.error.message ?? `Error ${result.error.status ?? ""}: Sign in failed.`);
       } else {
         window.location.href = "/";
       }
-    } catch {
-      setError("An unexpected error occurred. Please try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error — check that BETTER_AUTH_URL is set correctly.");
     } finally {
       setLoading(false);
     }
