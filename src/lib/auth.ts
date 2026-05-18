@@ -9,7 +9,16 @@ import {
   verifications,
 } from "@/db/schema";
 
+const productionURL = process.env.BETTER_AUTH_URL;
+
 export const auth = betterAuth({
+  baseURL: productionURL,
+  trustedOrigins: [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    ...(productionURL ? [productionURL] : []),
+    "https://*.vercel.app",
+  ],
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
