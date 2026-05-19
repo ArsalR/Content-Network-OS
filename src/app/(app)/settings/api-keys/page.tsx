@@ -90,24 +90,56 @@ export default function ApiKeysPage() {
 
       <div className="rounded-lg border border-border bg-card p-5">
         <h2 className="mb-2 text-sm font-semibold text-foreground">
-          How to configure
+          How to add keys (Vercel)
         </h2>
-        <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
           <li>
-            Open{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
-              .env.local
-            </code>{" "}
-            in the project root (create it if it doesn&apos;t exist).
+            Go to your project on{" "}
+            <a
+              href="https://vercel.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2"
+            >
+              vercel.com
+            </a>
+            {" "}→ <strong className="text-foreground">Settings</strong> → <strong className="text-foreground">Environment Variables</strong>.
           </li>
           <li>
-            Add the variable, e.g.{" "}
+            Add the variable (e.g.{" "}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
-              OPENAI_API_KEY=sk-…
+              OPENAI_API_KEY
             </code>
+            ) and set the value. Choose <strong className="text-foreground">All Environments</strong>.
           </li>
-          <li>Save the file and restart the dev server.</li>
+          <li>
+            Click <strong className="text-foreground">Save</strong>, then go to{" "}
+            <strong className="text-foreground">Deployments</strong> → <strong className="text-foreground">Redeploy</strong> so the new key is picked up.
+          </li>
         </ol>
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h2 className="mb-2 text-sm font-semibold text-foreground">
+          Also needed: Inngest (background jobs)
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          The pipeline, scheduler, and publishing all run as background jobs via Inngest.
+          Add <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">INNGEST_EVENT_KEY</code> and{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">INNGEST_SIGNING_KEY</code> from{" "}
+          <a
+            href="https://app.inngest.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2"
+          >
+            app.inngest.com
+          </a>
+          , then sync your app endpoint:{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
+            https://content-network-os.vercel.app/api/inngest
+          </code>
+        </p>
       </div>
     </div>
   );
