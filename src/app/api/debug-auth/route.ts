@@ -38,5 +38,22 @@ export async function GET() {
 
   results.signIn = { ok: true, message: "Auth module loaded" };
 
+  // 4. Check optional service keys
+  results.services = {
+    OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
+    INNGEST_EVENT_KEY: !!process.env.INNGEST_EVENT_KEY,
+    INNGEST_SIGNING_KEY: !!process.env.INNGEST_SIGNING_KEY,
+    PEXELS_API_KEY: !!process.env.PEXELS_API_KEY,
+    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+  };
+
+  // 5. Test Inngest functions load
+  try {
+    await import("@/inngest");
+    results.inngestFunctions = { ok: true };
+  } catch (e) {
+    results.inngestFunctions = { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+
   return NextResponse.json(results, { status: 200 });
 }
