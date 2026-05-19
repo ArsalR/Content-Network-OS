@@ -9,8 +9,9 @@ export async function middleware(request: NextRequest) {
     {
       baseURL: request.nextUrl.origin,
       headers: { cookie: request.headers.get("cookie") ?? "" },
+      timeout: 5000,
     }
-  );
+  ).catch(() => ({ data: null }));
 
   const { pathname } = request.nextUrl;
   const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/setup");
@@ -27,5 +28,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Never run middleware on static assets or API routes.
+  // API routes handle their own auth; intercepting /api/auth/* would cause
+  // the middleware's own betterFetch("/api/auth/get-session") call to loop.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/).*)"],
 };
