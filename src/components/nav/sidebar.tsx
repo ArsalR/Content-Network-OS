@@ -8,6 +8,7 @@ import {
   FolderOpen,
   Globe,
   Home,
+  Layers,
   Settings,
   Zap,
 } from "lucide-react";
@@ -21,6 +22,7 @@ const navItems = [
   { label: "Pipeline", href: "/pipeline", icon: Zap },
   { label: "Analytics", href: "/analytics", icon: BarChart2 },
   { label: "Settings", href: "/settings", icon: Settings },
+  { label: "Pinterest", href: "/settings/pinterest", icon: Layers },
 ];
 
 export function Sidebar() {

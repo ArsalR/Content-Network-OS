@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { createSite } from "@/actions/sites";
@@ -26,6 +26,7 @@ async function createSiteAction(
 export function SiteForm() {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(createSiteAction, initialState);
+  const [pinterestMode, setPinterestMode] = useState<boolean>(false);
 
   useEffect(() => {
     if (state?.ok) {
@@ -86,6 +87,78 @@ export function SiteForm() {
       <div className="space-y-2">
         <Label htmlFor="notes">Notes (optional)</Label>
         <Textarea id="notes" name="notes" placeholder="Any notes about this site..." rows={3} />
+      </div>
+
+      {/* Pinterest Settings */}
+      <div className="border-t border-border pt-4 space-y-4">
+        <h3 className="text-sm font-medium text-foreground">Pinterest Settings</h3>
+
+        {/* Hidden input ensures FormData always has the value (even when checkbox unchecked). */}
+        <input type="hidden" name="pinterestMode" value="false" />
+        <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <input
+            type="checkbox"
+            name="pinterestMode"
+            value="true"
+            checked={pinterestMode}
+            onChange={(e) => setPinterestMode(e.target.checked)}
+            className="accent-primary"
+          />
+          Enable Pinterest Mode
+        </label>
+        <p className="text-xs text-muted-foreground">
+          Optimizes article generation for Pinterest: vertical images, pin-style cover, aspirational
+          tone, and unique section visuals.
+        </p>
+
+        {pinterestMode && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="pinterestCoverPromptExtra">Cover Image Extra Instructions</Label>
+              <Textarea
+                id="pinterestCoverPromptExtra"
+                name="pinterestCoverPromptExtra"
+                rows={2}
+                placeholder="e.g. use warm autumn tones, include text overlay with serif font, cozy home aesthetic"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="pinterestSectionPromptExtra">Section Image Extra Instructions</Label>
+              <Textarea
+                id="pinterestSectionPromptExtra"
+                name="pinterestSectionPromptExtra"
+                rows={2}
+                placeholder="e.g. bright airy photography, white backgrounds, minimalist style, show products in use"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="pinterestContentStyle">Content Style Instructions</Label>
+              <Textarea
+                id="pinterestContentStyle"
+                name="pinterestContentStyle"
+                rows={2}
+                placeholder="e.g. focus on budget-friendly ideas under $50, use casual friendly tone, emphasize quick and easy"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="pinterestImageSize">Target Image Size</Label>
+              <Input
+                id="pinterestImageSize"
+                name="pinterestImageSize"
+                defaultValue="1000x1500"
+                readOnly
+                className="bg-muted/50"
+              />
+              <p className="text-xs text-muted-foreground">
+                Pinterest optimal: 1000×1500px (2:3 ratio). Stored as preference; the closest size
+                supported by your image provider is used automatically.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       <Button type="submit" disabled={isPending}>

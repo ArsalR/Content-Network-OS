@@ -9,9 +9,10 @@ export type PipelineInput = {
   keywords: string[];
   siteId: string;
   projectId: string;
-  articleType: "howto" | "listicle";
+  articleType: "howto" | "listicle" | "pinterest_listicle";
   toneId?: string;
   wordCount?: number;
+  pinterestContentExtra?: string;
 };
 
 export async function runPipeline(
@@ -50,6 +51,10 @@ export async function runPipeline(
           articleType: input.articleType,
           toneId: input.toneId,
           wordCount: input.wordCount,
+          // Pinterest mode is also auto-detected from the site config inside
+          // the Inngest function, so this is just an explicit hint.
+          pinterestMode: input.articleType === "pinterest_listicle" ? true : undefined,
+          pinterestContentExtra: input.pinterestContentExtra,
         },
       });
 

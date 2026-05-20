@@ -9,17 +9,27 @@ type DalleResponse = {
   error?: { message: string };
 };
 
-export async function generateImageDalle(prompt: string): Promise<ImageGenResult> {
+export async function generateImageDalle(
+  prompt: string,
+  sizeOverride?: string
+): Promise<ImageGenResult> {
   if (!env.OPENAI_API_KEY) {
     return { ok: false, error: "OpenAI API key not configured" };
   }
 
   const validSizes = ["1024x1024", "1792x1024", "1024x1792"] as const;
   type DalleSize = (typeof validSizes)[number];
-  const sizeInput = env.DALLE_IMAGE_SIZE;
-  const size: DalleSize = (validSizes as readonly string[]).includes(sizeInput)
-    ? (sizeInput as DalleSize)
-    : "1024x1024";
+
+  // Prefer explicit override (if valid), else fall back to env, else default square.
+  const isValidDalleSize = (v: string): v is DalleSize =>
+    (validSizes as readonly string[]).includes(v);
+
+  let size: DalleSize = "1024x1024";
+  if (sizeOverride && isValidDalleSize(sizeOverride)) {
+    size = sizeOverride;
+  } else if (env.DALLE_IMAGE_SIZE && isValidDalleSize(env.DALLE_IMAGE_SIZE)) {
+    size = env.DALLE_IMAGE_SIZE;
+  }
 
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",

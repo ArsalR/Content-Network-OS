@@ -27,6 +27,11 @@ type Site = {
   notes: string | null;
   imageProvider: "dalle" | "gemini";
   imageStyle: string | null;
+  pinterestMode?: boolean | null;
+  pinterestCoverPromptExtra?: string | null;
+  pinterestSectionPromptExtra?: string | null;
+  pinterestContentStyle?: string | null;
+  pinterestImageSize?: string | null;
 };
 
 type ActionState =
@@ -49,6 +54,9 @@ export function SiteEditForm({ site }: { site: Site }) {
   const router = useRouter();
   const [imageProvider, setImageProvider] = useState<"dalle" | "gemini">(
     site.imageProvider
+  );
+  const [pinterestMode, setPinterestMode] = useState<boolean>(
+    site.pinterestMode ?? false
   );
   const [state, formAction, isPending] = useActionState(
     buildAction(site.id),
@@ -185,6 +193,91 @@ export function SiteEditForm({ site }: { site: Site }) {
               </span>
             </p>
           </div>
+        </div>
+
+        {/* Pinterest Settings */}
+        <div className="border-t border-border pt-4 space-y-4">
+          <h3 className="text-sm font-medium text-foreground">
+            Pinterest Settings
+          </h3>
+
+          {/* Hidden input ensures FormData always has a value (even when checkbox unchecked).
+              When checked, the checkbox's "true" value comes AFTER the hidden in the form,
+              and FormData.get() returns the LAST value with that name. */}
+          <input type="hidden" name="pinterestMode" value="false" />
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <input
+              type="checkbox"
+              name="pinterestMode"
+              value="true"
+              checked={pinterestMode}
+              onChange={(e) => setPinterestMode(e.target.checked)}
+              className="accent-primary"
+            />
+            Enable Pinterest Mode
+          </label>
+          <p className="text-xs text-muted-foreground">
+            Generates vertical Pinterest-optimized articles: pin-style cover image, vertical
+            section images, aspirational language, unique visuals per item.
+          </p>
+
+          {pinterestMode && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="pinterestCoverPromptExtra">
+                  Cover Image Extra Instructions
+                </Label>
+                <Textarea
+                  id="pinterestCoverPromptExtra"
+                  name="pinterestCoverPromptExtra"
+                  rows={2}
+                  defaultValue={site.pinterestCoverPromptExtra ?? ""}
+                  placeholder="e.g. use warm autumn tones, include text overlay with serif font, cozy home aesthetic"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="pinterestSectionPromptExtra">
+                  Section Image Extra Instructions
+                </Label>
+                <Textarea
+                  id="pinterestSectionPromptExtra"
+                  name="pinterestSectionPromptExtra"
+                  rows={2}
+                  defaultValue={site.pinterestSectionPromptExtra ?? ""}
+                  placeholder="e.g. bright airy photography, white backgrounds, minimalist style, show products in use"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="pinterestContentStyle">
+                  Content Style Instructions
+                </Label>
+                <Textarea
+                  id="pinterestContentStyle"
+                  name="pinterestContentStyle"
+                  rows={2}
+                  defaultValue={site.pinterestContentStyle ?? ""}
+                  placeholder="e.g. focus on budget-friendly ideas under $50, use casual friendly tone, emphasize quick and easy"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="pinterestImageSize">Target Image Size</Label>
+                <Input
+                  id="pinterestImageSize"
+                  name="pinterestImageSize"
+                  defaultValue={site.pinterestImageSize ?? "1000x1500"}
+                  readOnly
+                  className="bg-muted/50"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Pinterest optimal: 1000×1500px (2:3 ratio). The closest size supported by
+                  your image provider is used automatically (DALL-E: 1024×1792, Gemini: 2:3).
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-3">

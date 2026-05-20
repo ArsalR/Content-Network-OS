@@ -12,13 +12,20 @@ export type ImageGenResultSerializable =
 export async function generateImage(
   prompt: string,
   provider: "dalle" | "gemini",
-  stylePrefix?: string
+  stylePrefix?: string,
+  pinterestMode?: boolean
 ): Promise<ImageGenResultSerializable> {
   const fullPrompt = stylePrefix ? `${stylePrefix} ${prompt}` : prompt;
+
+  // Pinterest images are vertical 2:3 ratio. DALL-E 3 supports 1024x1792 as
+  // the closest vertical size; Gemini Imagen supports a "2:3" aspect ratio.
+  const dalleSize = pinterestMode ? "1024x1792" : undefined;
+  const geminiRatio = pinterestMode ? "2:3" : undefined;
+
   const result: ImageGenResult =
     provider === "gemini"
-      ? await generateImageGemini(fullPrompt)
-      : await generateImageDalle(fullPrompt);
+      ? await generateImageGemini(fullPrompt, geminiRatio)
+      : await generateImageDalle(fullPrompt, dalleSize);
 
   if (!result.ok) return result;
   return {

@@ -36,6 +36,11 @@ export default async function SiteEditPage({
           notes: site.notes,
           imageProvider: site.imageProvider,
           imageStyle: site.imageStyle,
+          pinterestMode: site.pinterestMode ?? false,
+          pinterestCoverPromptExtra: site.pinterestCoverPromptExtra ?? null,
+          pinterestSectionPromptExtra: site.pinterestSectionPromptExtra ?? null,
+          pinterestContentStyle: site.pinterestContentStyle ?? null,
+          pinterestImageSize: site.pinterestImageSize ?? "1000x1500",
         }}
       />
     </div>

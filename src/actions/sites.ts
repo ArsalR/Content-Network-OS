@@ -18,6 +18,12 @@ const SiteInput = z.object({
   notes: z.string().optional(),
   imageProvider: z.enum(["dalle", "gemini"]).optional().default("dalle"),
   imageStyle: z.string().optional(),
+  // Pinterest-optimized generation settings (all optional, backward compatible)
+  pinterestMode: z.boolean().optional().default(false),
+  pinterestCoverPromptExtra: z.string().optional(),
+  pinterestSectionPromptExtra: z.string().optional(),
+  pinterestContentStyle: z.string().optional(),
+  pinterestImageSize: z.string().optional().default("1000x1500"),
 });
 
 export async function createSite(
@@ -33,6 +39,11 @@ export async function createSite(
     notes: formData.get("notes") || undefined,
     imageProvider: formData.get("imageProvider") || undefined,
     imageStyle: formData.get("imageStyle") || undefined,
+    pinterestMode: formData.get("pinterestMode") === "true",
+    pinterestCoverPromptExtra: formData.get("pinterestCoverPromptExtra") || undefined,
+    pinterestSectionPromptExtra: formData.get("pinterestSectionPromptExtra") || undefined,
+    pinterestContentStyle: formData.get("pinterestContentStyle") || undefined,
+    pinterestImageSize: formData.get("pinterestImageSize") || undefined,
   });
 
   if (!parsed.success) {
@@ -74,6 +85,11 @@ export async function updateSite(
     notes: formData.get("notes") || undefined,
     imageProvider: formData.get("imageProvider") || undefined,
     imageStyle: formData.get("imageStyle") || undefined,
+    pinterestMode: formData.get("pinterestMode") === "true",
+    pinterestCoverPromptExtra: formData.get("pinterestCoverPromptExtra") || undefined,
+    pinterestSectionPromptExtra: formData.get("pinterestSectionPromptExtra") || undefined,
+    pinterestContentStyle: formData.get("pinterestContentStyle") || undefined,
+    pinterestImageSize: formData.get("pinterestImageSize") || undefined,
   });
 
   if (!parsed.success) {

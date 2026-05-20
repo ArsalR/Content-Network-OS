@@ -9,6 +9,8 @@ import {
   extractImagePrompts,
   replaceImagePromptWithImg,
   extractItemCountFromTitle,
+  extractCoverImagePrompt,
+  removeCoverImagePromptLine,
 } from "@/lib/article-parser";
 import { eq } from "drizzle-orm";
 
@@ -17,10 +19,12 @@ type GenerateWithImagesData = {
   keyword: string;
   siteId: string;
   projectId: string;
-  articleType: "howto" | "listicle";
+  articleType: "howto" | "listicle" | "pinterest_listicle";
   toneId?: string;
   wordCount?: number;
   keywordId?: string;
+  pinterestMode?: boolean;
+  pinterestContentExtra?: string;
 };
 
 export const generateDraftWithImages = inngest.createFunction(
@@ -40,6 +44,8 @@ export const generateDraftWithImages = inngest.createFunction(
       toneId,
       wordCount,
       keywordId,
+      pinterestMode: pinterestModeFromEvent,
+      pinterestContentExtra,
     } = event.data as GenerateWithImagesData;
 
     // 1. Mark job running
@@ -58,6 +64,19 @@ export const generateDraftWithImages = inngest.createFunction(
 
     if (!site) throw new Error(`Site ${siteId} not found`);
 
+    // Determine Pinterest mode: explicit articleType, explicit event flag, or site default.
+    // This keeps backward compatibility — old events without these fields still work normally.
+    const sitePinterestMode = site.pinterestMode ?? false;
+    const pinterestMode =
+      articleType === "pinterest_listicle" ||
+      pinterestModeFromEvent === true ||
+      (articleType === "listicle" && sitePinterestMode === true);
+
+    // Read all optional Pinterest fields from the site (null-safe).
+    const pinterestCoverPromptExtra = site.pinterestCoverPromptExtra ?? "";
+    const pinterestSectionPromptExtra = site.pinterestSectionPromptExtra ?? "";
+    const pinterestContentStyle = site.pinterestContentStyle ?? "";
+
     // 3. Load tone
     const toneDescription = await step.run("load-tone", async () => {
       if (!toneId) return "clear, engaging, and helpful";
@@ -65,12 +84,45 @@ export const generateDraftWithImages = inngest.createFunction(
       return t?.prompt ?? "clear, engaging, and helpful";
     });
 
-    // 4. Generate article text with [Image Prompt N] tags
+    // 4. Generate article text with [Image Prompt N] / [Cover Image Prompt] tags
     const articleMarkdown = await step.run("generate-article-text", async () => {
       const wc = wordCount ?? 1000;
       let prompt: string;
 
-      if (articleType === "listicle") {
+      if (pinterestMode) {
+        // Pinterest-optimized listicle prompt — produces a [Cover Image Prompt] at the
+        // top and [Section Image Prompt N] for each numbered item.
+        const itemCount = extractItemCountFromTitle(keyword);
+        const styleBits = [pinterestContentStyle, pinterestContentExtra]
+          .filter(Boolean)
+          .join("\n");
+
+        prompt = `Write a Pinterest-optimized numbered listicle with the title: "${keyword}"
+Target keyword: "${keyword}"
+Number of items: ${itemCount}
+Tone: aspirational, inspiring, practical, in second person ("you", "your"). Use power words like "stunning", "effortless", "gorgeous", "transform", "perfect", "cozy", "dreamy", "beautiful".
+${styleBits ? `Additional style instructions:\n${styleBits}\n` : ""}
+Structure (Markdown only — no JSON, no preamble):
+
+1. The VERY FIRST LINE must be exactly:
+   [Cover Image Prompt] A vertical 1000x1500 Pinterest pin showing a collage of 2-3 photos of ${keyword} arranged in a flat lay or grid, with the article title "${keyword}" overlaid in bold readable text on a contrasting banner or overlay. Bright warm lifestyle photography, clean background, aspirational and beautiful.${pinterestCoverPromptExtra ? ` ${pinterestCoverPromptExtra}` : ""}
+
+2. # ${keyword}
+
+3. A 3-4 sentence introduction that hooks the reader with a relatable problem or aspiration.
+
+4. For EACH numbered item (1 through ${itemCount}):
+   ## {n}. [Catchy, curiosity-driven subheading]
+   [Section Image Prompt {n}] A vertical 1000x1500 lifestyle photo specifically showing the EXACT item described in this section — include 3 specific visual details (specific colors, specific materials, specific style elements) so this image is unique. Context: ${keyword}, item #{n}. Bright natural lighting, clean background, Pinterest aesthetic, lifestyle photography.${pinterestSectionPromptExtra ? ` ${pinterestSectionPromptExtra}` : ""}
+
+   A 100-150 word paragraph describing this item with actionable, inspiring language. Include specific colors, materials, or style details so this item feels visually distinct from the others.
+
+5. ## Conclusion — 2-3 sentences wrapping up with an aspirational call to action.
+
+IMPORTANT: Each [Section Image Prompt N] must include at least 3 specific visual details unique to that exact item (specific colors, specific materials, specific style elements) so that no two images in this article look similar, and images in this article would look distinctly different from images in other articles about similar topics.
+
+All numbered items must have unique subheadings and visually distinct image prompts. Number image prompts sequentially starting from 1. Output full Markdown only.`;
+      } else if (articleType === "listicle") {
         const itemCount = extractItemCountFromTitle(keyword);
         prompt = `Write a listicle article with the title: "${keyword}"
 Target keyword: "${keyword}"
@@ -115,31 +167,46 @@ Output full Markdown only. No JSON, no preamble.`;
       return result.text;
     });
 
-    // 5. Extract image prompts
+    // 5a. Pinterest cover image (only when in Pinterest mode and a [Cover Image Prompt] is present)
+    const coverPromptText = pinterestMode ? extractCoverImagePrompt(articleMarkdown) : null;
+
+    // 5b. Section image prompts (also matches [Section Image Prompt N] format)
     const imagePrompts = extractImagePrompts(articleMarkdown);
+
+    // Strip the cover prompt line from the markdown body so it never appears in the article.
+    let processedMarkdown = pinterestMode
+      ? removeCoverImagePromptLine(articleMarkdown)
+      : articleMarkdown;
 
     // 6. Decrypt site API key inside a step so it survives retries
     const decryptedApiKey = await step.run("decrypt-api-key", async () => {
       return decrypt(site.apiKey);
     });
 
-    // 7. Generate + upload images, replace prompt lines
-    let processedMarkdown = articleMarkdown;
-    let coverImageUrl: string | null = null;
+    /**
+     * Generate an image, upload to WordPress media library, and return the URL.
+     * Returns null on any failure so the article generation can continue.
+     */
+    async function generateAndUploadImage(
+      promptText: string,
+      keySuffix: string
+    ): Promise<string | null> {
+      const imgResult: ImageGenResultSerializable = await step.run(
+        `generate-image-${keySuffix}`,
+        async (): Promise<ImageGenResultSerializable> => {
+          return generateImage(
+            promptText,
+            (site.imageProvider as "dalle" | "gemini") ?? "dalle",
+            site.imageStyle ?? undefined,
+            pinterestMode
+          );
+        }
+      );
 
-    for (const prompt of imagePrompts) {
-      const imgResult = await step.run(`generate-image-${prompt.number}`, async (): Promise<ImageGenResultSerializable> => {
-        return generateImage(
-          prompt.text,
-          (site.imageProvider as "dalle" | "gemini") ?? "dalle",
-          site.imageStyle ?? undefined
-        );
-      });
+      if (!imgResult.ok) return null;
 
-      if (!imgResult.ok) continue;
-
-      const uploadResult = await step.run(`upload-image-${prompt.number}`, async () => {
-        const filename = `article-image-${Date.now()}-${prompt.number}.png`;
+      const uploadResult = await step.run(`upload-image-${keySuffix}`, async () => {
+        const filename = `article-image-${Date.now()}-${keySuffix}.png`;
         const formData = new FormData();
         const buffer = Buffer.from(imgResult.imageBase64, "base64");
         const blob = new Blob([buffer], { type: imgResult.mimeType });
@@ -148,12 +215,15 @@ Output full Markdown only. No JSON, no preamble.`;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 30_000);
         try {
-          const res = await fetch(`${site.apiBaseUrl.replace(/\/$/, "")}/wp-json/wp/v2/media`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${decryptedApiKey}` },
-            body: formData,
-            signal: controller.signal,
-          });
+          const res = await fetch(
+            `${site.apiBaseUrl.replace(/\/$/, "")}/wp-json/wp/v2/media`,
+            {
+              method: "POST",
+              headers: { Authorization: `Bearer ${decryptedApiKey}` },
+              body: formData,
+              signal: controller.signal,
+            }
+          );
           clearTimeout(timer);
           if (!res.ok) {
             return { ok: false as const, error: `Upload failed: ${res.status}` };
@@ -168,15 +238,27 @@ Output full Markdown only. No JSON, no preamble.`;
         }
       });
 
-      if (!uploadResult.ok) continue;
+      return uploadResult.ok ? uploadResult.url : null;
+    }
 
-      const imgUrl = uploadResult.url;
-      if (!coverImageUrl) coverImageUrl = imgUrl;
+    // 7a. Generate Pinterest cover image FIRST (if applicable)
+    let coverImageUrl: string | null = null;
+    if (coverPromptText) {
+      coverImageUrl = await generateAndUploadImage(coverPromptText, "cover");
+    }
+
+    // 7b. Generate + upload section images, replace prompt lines
+    for (const prompt of imagePrompts) {
+      const uploadedUrl = await generateAndUploadImage(prompt.text, String(prompt.number));
+      if (!uploadedUrl) continue;
+
+      // In non-Pinterest mode the first section image doubles as the cover (legacy behaviour).
+      if (!coverImageUrl) coverImageUrl = uploadedUrl;
 
       processedMarkdown = replaceImagePromptWithImg(
         processedMarkdown,
         prompt.number,
-        imgUrl,
+        uploadedUrl,
         `Image ${prompt.number}: ${prompt.text.slice(0, 60)}`
       );
     }

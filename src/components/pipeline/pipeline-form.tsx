@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useTransition } from "react";
+import { useState, useRef, useTransition, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { runPipeline } from "@/actions/pipeline";
 
-type Site = { id: string; name: string };
+type Site = { id: string; name: string; pinterestMode?: boolean | null };
 type Project = { id: string; name: string };
 type Tone = { id: string; name: string };
 
@@ -23,6 +23,8 @@ type Props = {
   projects: Project[];
   tones: Tone[];
 };
+
+type ArticleType = "howto" | "listicle" | "pinterest_listicle";
 
 function parseKeywordsFromCsv(text: string): string[] {
   const lines = text.split(/\r?\n/);
@@ -43,13 +45,29 @@ export function PipelineForm({ sites, projects, tones }: Props) {
   const [siteId, setSiteId] = useState<string>("");
   const [projectId, setProjectId] = useState<string>("");
   const [toneId, setToneId] = useState<string>("");
-  const [articleType, setArticleType] = useState<"howto" | "listicle">("howto");
+  const [articleType, setArticleType] = useState<ArticleType>("howto");
   const [wordCount, setWordCount] = useState<string>("1000");
+  const [pinterestContentExtra, setPinterestContentExtra] = useState<string>("");
   const [result, setResult] = useState<
     { ok: true; count: number } | { ok: false; error: string } | null
   >(null);
   const [isPending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // The selected site (used to detect Pinterest mode and show the badge).
+  const selectedSite = sites.find((s) => s.id === siteId);
+  const siteHasPinterestMode = !!selectedSite?.pinterestMode;
+
+  // When the user picks a Pinterest-mode site, auto-switch the article type
+  // to pinterest_listicle. The user can still manually change it afterwards.
+  useEffect(() => {
+    if (siteHasPinterestMode && articleType !== "pinterest_listicle") {
+      setArticleType("pinterest_listicle");
+    }
+    // We intentionally only react to siteHasPinterestMode flipping true;
+    // we do not auto-revert if the user manually picks another type later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteHasPinterestMode]);
 
   function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -90,6 +108,10 @@ export function PipelineForm({ sites, projects, tones }: Props) {
         articleType,
         toneId: toneId || undefined,
         wordCount: articleType === "howto" ? parseInt(wordCount) || 1000 : undefined,
+        pinterestContentExtra:
+          articleType === "pinterest_listicle" && pinterestContentExtra.trim()
+            ? pinterestContentExtra.trim()
+            : undefined,
       });
       if (res.ok) {
         setResult({ ok: true, count: res.data.count });
@@ -176,8 +198,15 @@ export function PipelineForm({ sites, projects, tones }: Props) {
 
         {/* Article type */}
         <div className="space-y-2">
-          <Label>Article Type</Label>
-          <div className="flex gap-4">
+          <div className="flex items-center justify-between">
+            <Label>Article Type</Label>
+            {siteHasPinterestMode && (
+              <span className="rounded-full bg-pink-500/15 px-2.5 py-0.5 text-[11px] font-medium text-pink-600 dark:text-pink-400">
+                Pinterest Mode is enabled for this site
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-4">
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input
                 type="radio"
@@ -200,8 +229,39 @@ export function PipelineForm({ sites, projects, tones }: Props) {
               />
               Listicle (e.g. &quot;25 Ideas&quot;)
             </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="radio"
+                name="articleType"
+                value="pinterest_listicle"
+                checked={articleType === "pinterest_listicle"}
+                onChange={() => setArticleType("pinterest_listicle")}
+                className="accent-primary"
+              />
+              Pinterest Listicle (Optimized for Pinterest feed)
+            </label>
           </div>
         </div>
+
+        {/* Pinterest-only content extra instructions */}
+        {articleType === "pinterest_listicle" && (
+          <div className="space-y-2">
+            <Label htmlFor="pinterestContentExtra">
+              Pinterest Content Extra Instructions (optional)
+            </Label>
+            <Textarea
+              id="pinterestContentExtra"
+              value={pinterestContentExtra}
+              onChange={(e) => setPinterestContentExtra(e.target.value)}
+              rows={3}
+              placeholder="e.g. focus on cozy autumn aesthetic, use warm earthy colors, keep ideas under $30, target college dorm rooms"
+            />
+            <p className="text-xs text-muted-foreground">
+              Applies only to this run. Combined with the site&apos;s saved Pinterest content
+              style.
+            </p>
+          </div>
+        )}
 
         {/* Tone + Word count row */}
         <div className="grid grid-cols-2 gap-4">

@@ -11,16 +11,30 @@ type GeminiResponse = {
   }>;
 };
 
-export async function generateImageGemini(prompt: string): Promise<ImageGenResult> {
+const VALID_GEMINI_ASPECT_RATIOS = ["1:1", "9:16", "16:9", "3:4", "4:3", "2:3", "3:2"] as const;
+type GeminiAspectRatio = (typeof VALID_GEMINI_ASPECT_RATIOS)[number];
+
+export async function generateImageGemini(
+  prompt: string,
+  aspectRatioOverride?: string
+): Promise<ImageGenResult> {
   if (!env.GEMINI_API_KEY) {
     return { ok: false, error: "Gemini API key not configured" };
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${env.GEMINI_API_KEY}`;
 
+  const isValidRatio = (v: string): v is GeminiAspectRatio =>
+    (VALID_GEMINI_ASPECT_RATIOS as readonly string[]).includes(v);
+
+  const aspectRatio: GeminiAspectRatio =
+    aspectRatioOverride && isValidRatio(aspectRatioOverride)
+      ? aspectRatioOverride
+      : "1:1";
+
   const body = {
     instances: [{ prompt }],
-    parameters: { sampleCount: 1, aspectRatio: "1:1" },
+    parameters: { sampleCount: 1, aspectRatio },
   };
 
   const res = await fetch(url, {

@@ -145,6 +145,12 @@ export const sites = pgTable("sites", {
   notes: text("notes"),
   imageProvider: imageProviderEnum("image_provider").default("dalle").notNull(),
   imageStyle: text("image_style"),
+  // Pinterest-optimized generation settings
+  pinterestMode: boolean("pinterest_mode").default(false).notNull(),
+  pinterestCoverPromptExtra: text("pinterest_cover_prompt_extra"),
+  pinterestSectionPromptExtra: text("pinterest_section_prompt_extra"),
+  pinterestContentStyle: text("pinterest_content_style"),
+  pinterestImageSize: text("pinterest_image_size").default("1000x1500"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
