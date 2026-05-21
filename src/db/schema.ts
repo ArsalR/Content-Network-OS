@@ -19,6 +19,8 @@ export const siteStatusEnum = pgEnum("site_status", [
 
 export const imageProviderEnum = pgEnum("image_provider_type", ["dalle", "gemini"]);
 
+export const siteKindEnum = pgEnum("site_kind", ["wordpress", "pinterest-cms"]);
+
 export const projectStatusEnum = pgEnum("project_status", [
   "active",
   "archived",
@@ -139,6 +141,10 @@ export const sites = pgTable("sites", {
   hostname: text("hostname").notNull(),
   apiBaseUrl: text("api_base_url").notNull(),
   apiKey: text("api_key").notNull(),
+  // Which CMS dialect this site speaks. Defaults to wordpress so every
+  // existing row is treated as a WP site. New Pinterest CMS installs set
+  // this to "pinterest-cms" explicitly.
+  kind: siteKindEnum("kind").default("wordpress").notNull(),
   status: siteStatusEnum("status").default("active").notNull(),
   defaultCategory: text("default_category"),
   defaultTone: text("default_tone"),
@@ -262,6 +268,8 @@ export const drafts = pgTable(
     index("drafts_project_id_idx").on(t.projectId),
     index("drafts_status_idx").on(t.status),
     index("drafts_scheduled_for_idx").on(t.scheduledFor),
+    // Used to look up a draft by its CMS post id during republish (PUT vs POST).
+    index("drafts_published_post_id_idx").on(t.publishedPostId),
   ]
 );
 

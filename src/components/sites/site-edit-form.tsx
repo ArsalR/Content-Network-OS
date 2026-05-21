@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { updateSite } from "@/actions/sites";
@@ -17,11 +17,14 @@ import {
 } from "@/components/ui/select";
 import { TestConnectionButton } from "@/components/sites/test-connection-button";
 
+type SiteKind = "wordpress" | "pinterest-cms";
+
 type Site = {
   id: string;
   name: string;
   hostname: string;
   apiBaseUrl: string;
+  kind?: "wordpress" | "pinterest-cms";
   defaultCategory: string | null;
   defaultTone: string | null;
   notes: string | null;
@@ -58,10 +61,18 @@ export function SiteEditForm({ site }: { site: Site }) {
   const [pinterestMode, setPinterestMode] = useState<boolean>(
     site.pinterestMode ?? false
   );
+  const [kind, setKind] = useState<SiteKind>(site.kind ?? "wordpress");
+  const apiBaseUrlRef = useRef<HTMLInputElement>(null);
   const [state, formAction, isPending] = useActionState(
     buildAction(site.id),
     initialState
   );
+
+  function applyPinterestCmsDefault() {
+    const host = site.hostname?.trim();
+    if (!host || !apiBaseUrlRef.current) return;
+    apiBaseUrlRef.current.value = `https://${host.replace(/^https?:\/\//, "")}/api/public/v1`;
+  }
 
   useEffect(() => {
     if (state?.ok) {
@@ -94,12 +105,48 @@ export function SiteEditForm({ site }: { site: Site }) {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="apiBaseUrl">API Base URL</Label>
+          <Label>CMS Type</Label>
+          <input type="hidden" name="kind" value={kind} />
+          <Select value={kind} onValueChange={(v) => setKind(v as SiteKind)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="wordpress">WordPress</SelectItem>
+              <SelectItem value="pinterest-cms">Pinterest CMS</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Which CMS dialect this site speaks. Determines the API endpoints and payload shape
+            used at publish time.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="apiBaseUrl">API Base URL</Label>
+            {kind === "pinterest-cms" && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={applyPinterestCmsDefault}
+              >
+                Use Pinterest CMS default
+              </Button>
+            )}
+          </div>
           <Input
             id="apiBaseUrl"
             name="apiBaseUrl"
+            ref={apiBaseUrlRef}
             type="url"
             defaultValue={site.apiBaseUrl}
+            placeholder={
+              kind === "pinterest-cms"
+                ? "https://myblog.com/api/public/v1"
+                : "https://myblog.com"
+            }
             required
           />
         </div>
@@ -113,7 +160,11 @@ export function SiteEditForm({ site }: { site: Site }) {
             id="apiKey"
             name="apiKey"
             type="password"
-            placeholder="Enter new API key to change"
+            placeholder={
+              kind === "pinterest-cms"
+                ? "cms_live_… (leave blank to keep existing)"
+                : "Enter new API key to change"
+            }
           />
         </div>
 

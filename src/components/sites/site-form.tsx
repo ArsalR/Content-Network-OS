@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { createSite } from "@/actions/sites";
@@ -8,6 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+type SiteKind = "wordpress" | "pinterest-cms";
 
 type ActionState =
   | { ok: true; data: { id: string } }
@@ -27,12 +36,26 @@ export function SiteForm() {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(createSiteAction, initialState);
   const [pinterestMode, setPinterestMode] = useState<boolean>(false);
+  const [kind, setKind] = useState<SiteKind>("wordpress");
+  const hostnameRef = useRef<HTMLInputElement>(null);
+  const apiBaseUrlRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (state?.ok) {
       router.push("/sites");
     }
   }, [state, router]);
+
+  function applyPinterestCmsDefault() {
+    const host = hostnameRef.current?.value?.trim();
+    if (!host) {
+      apiBaseUrlRef.current?.focus();
+      return;
+    }
+    if (apiBaseUrlRef.current) {
+      apiBaseUrlRef.current.value = `https://${host.replace(/^https?:\/\//, "")}/api/public/v1`;
+    }
+  }
 
   return (
     <form action={formAction} className="space-y-6 max-w-xl">
@@ -49,16 +72,52 @@ export function SiteForm() {
 
       <div className="space-y-2">
         <Label htmlFor="hostname">Hostname</Label>
-        <Input id="hostname" name="hostname" placeholder="myblog.com" required />
+        <Input id="hostname" name="hostname" ref={hostnameRef} placeholder="myblog.com" required />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="apiBaseUrl">API Base URL</Label>
+        <Label>CMS Type</Label>
+        {/* Hidden input mirrors the controlled Select so FormData carries the value. */}
+        <input type="hidden" name="kind" value={kind} />
+        <Select value={kind} onValueChange={(v) => setKind(v as SiteKind)}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="wordpress">WordPress</SelectItem>
+            <SelectItem value="pinterest-cms">Pinterest CMS</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Which CMS dialect this site speaks. Determines the API endpoints and payload shape
+          used at publish time.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label htmlFor="apiBaseUrl">API Base URL</Label>
+          {kind === "pinterest-cms" && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={applyPinterestCmsDefault}
+            >
+              Use Pinterest CMS default
+            </Button>
+          )}
+        </div>
         <Input
           id="apiBaseUrl"
           name="apiBaseUrl"
+          ref={apiBaseUrlRef}
           type="url"
-          placeholder="https://myblog.com"
+          placeholder={
+            kind === "pinterest-cms"
+              ? "https://myblog.com/api/public/v1"
+              : "https://myblog.com"
+          }
           required
         />
       </div>
@@ -69,7 +128,11 @@ export function SiteForm() {
           id="apiKey"
           name="apiKey"
           type="password"
-          placeholder="Enter your WordPress application password"
+          placeholder={
+            kind === "pinterest-cms"
+              ? "cms_live_…"
+              : "Enter your WordPress application password"
+          }
           required
         />
       </div>

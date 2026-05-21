@@ -13,6 +13,9 @@ const SiteInput = z.object({
   hostname: z.string().min(1),
   apiBaseUrl: z.string().url(),
   apiKey: z.string().min(1),
+  // CMS dialect. Defaults to "wordpress" so existing forms that don't yet
+  // submit a kind field keep working unchanged.
+  kind: z.enum(["wordpress", "pinterest-cms"]).optional().default("wordpress"),
   defaultCategory: z.string().optional(),
   defaultTone: z.string().optional(),
   notes: z.string().optional(),
@@ -34,6 +37,7 @@ export async function createSite(
     hostname: formData.get("hostname"),
     apiBaseUrl: formData.get("apiBaseUrl"),
     apiKey: formData.get("apiKey"),
+    kind: formData.get("kind") || undefined,
     defaultCategory: formData.get("defaultCategory") || undefined,
     defaultTone: formData.get("defaultTone") || undefined,
     notes: formData.get("notes") || undefined,
@@ -80,6 +84,7 @@ export async function updateSite(
     hostname: formData.get("hostname"),
     apiBaseUrl: formData.get("apiBaseUrl"),
     apiKey: rawApiKey && rawApiKey !== "" ? rawApiKey : undefined,
+    kind: formData.get("kind") || undefined,
     defaultCategory: formData.get("defaultCategory") || undefined,
     defaultTone: formData.get("defaultTone") || undefined,
     notes: formData.get("notes") || undefined,
@@ -164,7 +169,7 @@ export async function testSiteConnection(
     if (!site) return { ok: false, error: "Site not found" };
 
     const apiKey = decrypt(site.apiKey);
-    const result = await testConnection(site.apiBaseUrl, apiKey);
+    const result = await testConnection(site.apiBaseUrl, apiKey, site.kind);
 
     if (!result.ok) {
       await db.update(sites).set({ status: "error", updatedAt: new Date() }).where(eq(sites.id, id));

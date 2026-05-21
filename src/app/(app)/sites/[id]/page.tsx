@@ -31,6 +31,7 @@ export default async function SiteEditPage({
           name: site.name,
           hostname: site.hostname,
           apiBaseUrl: site.apiBaseUrl,
+          kind: site.kind ?? "wordpress",
           defaultCategory: site.defaultCategory,
           defaultTone: site.defaultTone,
           notes: site.notes,
