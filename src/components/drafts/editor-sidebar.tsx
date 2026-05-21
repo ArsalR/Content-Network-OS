@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,6 +23,7 @@ import {
   unscheduleDraft,
   publishDraftNow,
 } from "@/actions/drafts";
+import { MAX_PUBLISH_ATTEMPTS } from "@/lib/publish-constants";
 import { CoverImagePicker } from "./cover-image-picker";
 import { SeoPreview } from "./seo-preview";
 
@@ -92,6 +94,7 @@ export function EditorSidebar({
   failureReason,
   failureCode,
 }: EditorSidebarProps) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [scheduleDate, setScheduleDate] = useState("");
 
@@ -130,7 +133,7 @@ export function EditorSidebar({
           <div className="flex items-center gap-2 text-muted-foreground">
             {typeof publishAttempts === "number" && publishAttempts > 0 && (
               <span>
-                Attempt {publishAttempts}/5
+                Attempt {publishAttempts}/{MAX_PUBLISH_ATTEMPTS}
               </span>
             )}
             {failureCode && (
@@ -387,7 +390,9 @@ export function EditorSidebar({
                   const result = await publishDraftNow(draftId);
                   if (result.ok) {
                     toast.success("Publishing queued!");
-                    window.location.reload();
+                    // router.refresh preserves any unsaved sidebar edits;
+                    // window.location.reload would blow them away.
+                    router.refresh();
                   } else {
                     toast.error(result.error);
                   }

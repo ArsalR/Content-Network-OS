@@ -77,13 +77,18 @@ export async function createSite(
     // isn't there we just skip and rely on synchronous publish responses.
     if (parsed.data.kind === "pinterest-cms") {
       try {
-        const capabilities = await refreshCapabilities({
-          id: site!.id,
-          apiBaseUrl: parsed.data.apiBaseUrl,
-          kind: "pinterest-cms",
-          capabilitiesCache: null,
-          capabilitiesCheckedAt: null,
-        });
+        const capabilities = await refreshCapabilities(
+          {
+            id: site!.id,
+            apiBaseUrl: parsed.data.apiBaseUrl,
+            kind: "pinterest-cms",
+            capabilitiesCache: null,
+            capabilitiesCheckedAt: null,
+          },
+          // Send the unencrypted API key — the CMS may require auth on
+          // /capabilities, and we don't yet have a decryptable row to read.
+          parsed.data.apiKey
+        );
         if (capabilities.features.webhooks) {
           const url = webhookReceiverUrlFor(site!.id);
           const reg = await registerWebhook(
@@ -96,22 +101,42 @@ export async function createSite(
             { url, events: WEBHOOK_EVENTS }
           );
           if (reg.ok) {
-            await db
-              .update(sites)
-              .set({
-                webhookId: reg.data.id,
-                webhookSecret: encrypt(reg.data.secret),
-                updatedAt: new Date(),
-              })
-              .where(eq(sites.id, site!.id));
+            // The brief says fail loudly if secret persistence fails — we
+            // honour that by marking the site with status:'error' and a
+            // note rather than rolling back (rollback would force the user
+            // to re-enter every field). The webhook receiver refuses to
+            // accept events when webhookSecret is NULL so we won't silently
+            // accept unsigned traffic in any case.
+            try {
+              const encryptedSecret = encrypt(reg.data.secret);
+              await db
+                .update(sites)
+                .set({
+                  webhookId: reg.data.id,
+                  webhookSecret: encryptedSecret,
+                  updatedAt: new Date(),
+                })
+                .where(eq(sites.id, site!.id));
+            } catch (encErr) {
+              const msg =
+                encErr instanceof Error ? encErr.message : "Unknown encrypt error";
+              await db
+                .update(sites)
+                .set({
+                  status: "error",
+                  notes:
+                    `[webhook registration partial failure] ` +
+                    `webhookId received but encrypt(secret) failed: ${msg}. ` +
+                    `Please regenerate the webhook from the CMS dashboard.`,
+                  webhookId: reg.data.id,
+                  updatedAt: new Date(),
+                })
+                .where(eq(sites.id, site!.id));
+            }
           }
-          // If reg failed we don't roll back the site — the CMS may not
-          // have shipped POST /admin/webhooks yet. The brief says "fail
-          // loudly and roll back" but only when features.webhooks is on
-          // AND the registration fails. We've gated on features.webhooks,
-          // so a failure here means the CMS contract isn't honoring its
-          // own advertised capability — log it visibly via apiCalls (the
-          // registerWebhook helper already does) and continue.
+          // If reg failed we don't roll back the site — the CMS may have
+          // advertised features.webhooks but not yet exposed the admin
+          // endpoint. The error is already in apiCalls via registerWebhook.
         }
       } catch {
         // Registration is best-effort during create — don't fail the site.

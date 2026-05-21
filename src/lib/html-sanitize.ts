@@ -10,6 +10,10 @@
  * the editor's content can plausibly carry (figures, gallery images, etc).
  * Anything not on the list (script, iframe, style, on* attributes, etc) is
  * stripped.
+ *
+ * A DOMPurify `afterSanitizeAttributes` hook upgrades every
+ * `<a target="_blank">` to also carry `rel="noopener noreferrer"` to close
+ * the reverse-tabnabbing vector.
  */
 
 import DOMPurify from "isomorphic-dompurify";
@@ -44,19 +48,44 @@ const ALLOWED_ATTRS: string[] = [
   "srcset", "sizes", "type",
 ];
 
+// URL schemes we allow in href/src. Note: NO data:, NO blob:, NO javascript:,
+// NO vbscript:. Keep this aligned with the comment that motivates it.
+const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|tel):|\/|#|\?)/i;
+
+// Install the hook once on module load. DOMPurify hooks are global per
+// instance, and isomorphic-dompurify reuses the same instance.
+let hooksInstalled = false;
+function ensureHooks() {
+  if (hooksInstalled) return;
+  hooksInstalled = true;
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    // Force every external link to be safe: rel="noopener noreferrer".
+    // Anchors with target="_blank" without noopener allow the new page to
+    // navigate window.opener — reverse tabnabbing.
+    if (node.tagName !== "A") return;
+    const el = node as Element;
+    const target = el.getAttribute("target");
+    if (target === "_blank") {
+      const rel = (el.getAttribute("rel") ?? "").toLowerCase();
+      const tokens = new Set(rel.split(/\s+/).filter(Boolean));
+      tokens.add("noopener");
+      tokens.add("noreferrer");
+      el.setAttribute("rel", Array.from(tokens).join(" "));
+    }
+  });
+}
+
 /**
  * Sanitize a string of HTML for storage / transmission to the CMS.
  * Returns the cleaned HTML. Empty / null / undefined input returns "".
  */
 export function sanitizeHtml(html: string | null | undefined): string {
   if (!html) return "";
+  ensureHooks();
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR: ALLOWED_ATTRS,
-    // Force every <a> with target="_blank" to have safe rel.
-    ADD_ATTR: ["target"],
-    // Strip data:/javascript:/vbscript: URLs in href/src
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|ftp|sftp):|\/|#|\?)/i,
+    ALLOWED_URI_REGEXP,
     // Drop the wrapping element when no allowed tag matches — return the text.
     KEEP_CONTENT: true,
     // Don't return DOM; we want a string for Postgres / HTTP body.

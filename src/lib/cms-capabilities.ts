@@ -47,7 +47,7 @@ type CapabilitiesSiteRow = {
   apiBaseUrl: string;
   kind: "wordpress" | "pinterest-cms";
   capabilitiesCache: unknown;
-  capabilitiesCheckedAt: Date | null;
+  capabilitiesCheckedAt: Date | string | null;
 };
 
 /**
@@ -58,24 +58,31 @@ type CapabilitiesSiteRow = {
  *
  * WordPress sites don't have a capabilities endpoint; we short-circuit
  * to DEFAULT without making any HTTP call.
+ *
+ * `apiKey` should be the already-DECRYPTED API key. When present it's sent
+ * as a Bearer token so the probe works against CMSes that require auth on
+ * /capabilities. (The endpoint may also be public — auth is sent if and
+ * only if the caller has the key handy.)
  */
 export async function getCapabilities(
-  site: CapabilitiesSiteRow
+  site: CapabilitiesSiteRow,
+  apiKey?: string
 ): Promise<CmsCapabilities> {
   // WP doesn't advertise capabilities. We treat it as "no features".
   if (site.kind !== "pinterest-cms") {
     return DEFAULT_CAPABILITIES;
   }
 
-  // Fresh cache?
+  // Fresh cache? Accepts Date or ISO string (Inngest step.run boundaries
+  // serialize Dates to strings, so callers shouldn't have to re-hydrate).
   const cached = parseCachedCapabilities(site.capabilitiesCache);
-  const checkedAt = site.capabilitiesCheckedAt;
-  if (cached && checkedAt && Date.now() - checkedAt.getTime() < CACHE_TTL_MS) {
+  const checkedAtMs = toEpochMs(site.capabilitiesCheckedAt);
+  if (cached && checkedAtMs !== null && Date.now() - checkedAtMs < CACHE_TTL_MS) {
     return cached;
   }
 
   // Probe.
-  const fetched = await probeCapabilities(site.apiBaseUrl);
+  const fetched = await probeCapabilities(site.apiBaseUrl, apiKey);
   // Persist the (possibly DEFAULT) result so we don't re-probe for 24h on a
   // CMS that doesn't advertise capabilities yet.
   try {
@@ -98,10 +105,11 @@ export async function getCapabilities(
  * connection" flow where the user wants an immediate fresh read.
  */
 export async function refreshCapabilities(
-  site: CapabilitiesSiteRow
+  site: CapabilitiesSiteRow,
+  apiKey?: string
 ): Promise<CmsCapabilities> {
   if (site.kind !== "pinterest-cms") return DEFAULT_CAPABILITIES;
-  const fetched = await probeCapabilities(site.apiBaseUrl);
+  const fetched = await probeCapabilities(site.apiBaseUrl, apiKey);
   try {
     await db
       .update(sites)
@@ -117,12 +125,21 @@ export async function refreshCapabilities(
   return fetched;
 }
 
-async function probeCapabilities(apiBaseUrl: string): Promise<CmsCapabilities> {
+async function probeCapabilities(
+  apiBaseUrl: string,
+  apiKey?: string
+): Promise<CmsCapabilities> {
   const url = `${apiBaseUrl.replace(/\/$/, "")}/capabilities`;
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 5_000);
-    const res = await fetch(url, { method: "GET", signal: controller.signal });
+    const headers: Record<string, string> = {};
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
     clearTimeout(t);
     if (res.status === 404) return DEFAULT_CAPABILITIES;
     if (!res.ok) return DEFAULT_CAPABILITIES;
@@ -133,6 +150,14 @@ async function probeCapabilities(apiBaseUrl: string): Promise<CmsCapabilities> {
   } catch {
     return DEFAULT_CAPABILITIES;
   }
+}
+
+/** Normalize a Date-or-string-or-null into epoch ms (or null). */
+function toEpochMs(d: Date | string | null | undefined): number | null {
+  if (!d) return null;
+  if (d instanceof Date) return d.getTime();
+  const parsed = Date.parse(d);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function parseCachedCapabilities(raw: unknown): CmsCapabilities | null {

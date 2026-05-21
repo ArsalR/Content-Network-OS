@@ -218,19 +218,28 @@ export function SiteEditForm({ site }: { site: Site }) {
 
           {kind === "pinterest-cms" && syncedCategories !== null ? (
             <>
-              {/* Hidden input carries the controlled value into FormData. */}
+              {/* Radix Select reserves the empty string for the "clear"
+                  sentinel and throws when given an empty-string SelectItem.
+                  Use a synthetic "__none__" value in the dropdown and
+                  translate it back to "" in the hidden input that hits
+                  FormData. */}
               <input
                 type="hidden"
                 name="defaultCategory"
-                value={categoryValue}
+                value={categoryValue === "__none__" ? "" : categoryValue}
               />
-              <Select value={categoryValue} onValueChange={setCategoryValue}>
+              <Select
+                value={categoryValue || "__none__"}
+                onValueChange={(v) =>
+                  setCategoryValue(v === "__none__" ? "" : v)
+                }
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Pick a category…" />
                 </SelectTrigger>
                 <SelectContent>
                   {/* Allow clearing back to none */}
-                  <SelectItem value="">— None —</SelectItem>
+                  <SelectItem value="__none__">— None —</SelectItem>
                   {/* If the current value isn't in the synced list, show it
                       so the user understands what's about to be saved. */}
                   {categoryValue &&

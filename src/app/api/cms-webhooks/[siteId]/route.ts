@@ -22,9 +22,9 @@
 
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { sites, drafts, webhookDeliveries, projects } from "@/db/schema";
+import { sites, drafts, webhookDeliveries } from "@/db/schema";
 import { decrypt } from "@/lib/crypto";
-import { eq, lt } from "drizzle-orm";
+import { eq, lt, desc } from "drizzle-orm";
 import { verifyWebhookSignature } from "@/lib/cms-webhook-signature";
 
 export const runtime = "nodejs";
@@ -98,11 +98,24 @@ export async function POST(
   }
 
   // Atomic dedupe: insert and let UNIQUE PK fail if already seen.
+  // We only treat the postgres unique-violation code (23505) as "already
+  // seen" — any other error indicates a real DB problem and should be
+  // surfaced (return 500 so the CMS retries the delivery instead of
+  // silently losing it).
   try {
     await db.insert(webhookDeliveries).values({ id: deliveryId });
-  } catch {
-    // Already processed — return 200 so the CMS stops retrying.
-    return NextResponse.json({ ok: true, deduped: true });
+  } catch (err) {
+    const pgCode =
+      (err as { code?: string; cause?: { code?: string } })?.code ??
+      (err as { cause?: { code?: string } })?.cause?.code;
+    if (pgCode === "23505") {
+      // Already processed — return 200 so the CMS stops retrying.
+      return NextResponse.json({ ok: true, deduped: true });
+    }
+    return new NextResponse(
+      `Webhook dedupe write failed: ${err instanceof Error ? err.message : String(err)}`,
+      { status: 500 }
+    );
   }
 
   // Best-effort cleanup of old delivery rows. Don't fail the webhook on
@@ -167,20 +180,31 @@ async function handlePostUpsert(siteId: string, payload: WebhookPayload) {
     return;
   }
 
-  // Not one of ours — insert as an imported published draft. Requires a
-  // projectId; we pick the first project on the assumption that imports
-  // belong to whichever project owns the site (CNOS doesn't yet track
-  // project-per-site). If there are no projects, skip silently — the user
-  // will see the post on the CMS but not in CNOS, which is acceptable.
-  const firstProject = await db.query.projects.findFirst({
-    orderBy: (p, { asc }) => [asc(p.createdAt)],
-  });
-  if (!firstProject) return;
+  // Not one of ours — insert as an imported published draft. CNOS doesn't
+  // yet model project-per-site, so the safest heuristic is to attach the
+  // import to the project that already owns the most recent draft targeted
+  // at this site. If no such draft exists we skip the import (silently —
+  // the user will see the post on the CMS but not in CNOS) rather than
+  // routing it to a random tenant's project.
+  const [precedent] = await db
+    .select({ projectId: drafts.projectId })
+    .from(drafts)
+    .where(eq(drafts.targetSiteId, siteId))
+    .orderBy(desc(drafts.createdAt))
+    .limit(1);
+
+  if (!precedent?.projectId) {
+    // Nothing safe to attach to; record the skip and bail.
+    console.warn(
+      `[cms-webhook] Skipping import for site=${siteId} post=${post.id}: no precedent draft for this site`
+    );
+    return;
+  }
 
   // Drafts table requires non-null contentHtml — store an empty placeholder
   // for imports; the source-of-truth is on the CMS.
   await db.insert(drafts).values({
-    projectId: firstProject.id,
+    projectId: precedent.projectId,
     title: post.title ?? "Imported post",
     slug: post.slug ?? post.id,
     contentHtml: "<p><em>Imported from CMS — content lives on the CMS.</em></p>",
@@ -190,9 +214,6 @@ async function handlePostUpsert(siteId: string, payload: WebhookPayload) {
     publishedUrl: (post.url as string | undefined) ?? null,
     publishedAt: new Date(),
   });
-
-  // Mark the unused projects import to silence any lint warning.
-  void projects;
 }
 
 /**

@@ -228,12 +228,16 @@ export async function publishDraftNow(
 
     // Manual republish: clear the stored idempotency key so publishDraft
     // generates a fresh one (each user-initiated republish should be a
-    // distinct CMS-side operation, not a replay).
+    // distinct CMS-side operation, not a replay), and reset the attempt
+    // counter so the user gets the full retry budget on this republish.
     await db
       .update(drafts)
       .set({
         status: "publishing",
         lastIdempotencyKey: null,
+        publishAttempts: 0,
+        failureReason: null,
+        failureCode: null,
         updatedAt: new Date(),
       })
       .where(eq(drafts.id, id));

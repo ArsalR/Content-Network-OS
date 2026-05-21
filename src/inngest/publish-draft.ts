@@ -12,10 +12,9 @@ import { extractInlineImages } from "@/lib/cms-client";
 import { getCapabilities } from "@/lib/cms-capabilities";
 import { sanitizeHtml } from "@/lib/html-sanitize";
 import { CnosCmsError } from "@/lib/cms-errors";
-import { eq } from "drizzle-orm";
+import { MAX_PUBLISH_ATTEMPTS } from "@/lib/publish-constants";
+import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-
-const MAX_PUBLISH_ATTEMPTS = 5;
 
 type GalleryImageInput = {
   url: string;
@@ -27,12 +26,34 @@ type GalleryImageInput = {
 /** Replace every <img src="OLD"> with <img src="NEW">, preserving other attrs. */
 function rewriteImgSrc(html: string, oldUrl: string, newUrl: string): string {
   if (oldUrl === newUrl) return html;
-  const escaped = oldUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedSearch = oldUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // `$` in `newUrl` is interpreted as a back-reference in String.replace;
+  // double it so the literal value reaches the output (signed CloudFront /
+  // S3 URLs sometimes contain `$`).
+  const safeReplacement = newUrl.replace(/\$/g, "$$$$");
   const re = new RegExp(
-    `(<img\\b[^>]*\\bsrc\\s*=\\s*)(?:"${escaped}"|'${escaped}'|${escaped})`,
+    `(<img\\b[^>]*\\bsrc\\s*=\\s*)(?:"${escapedSearch}"|'${escapedSearch}'|${escapedSearch})`,
     "gi"
   );
-  return html.replace(re, `$1"${newUrl}"`);
+  return html.replace(re, `$1"${safeReplacement}"`);
+}
+
+/**
+ * Returns true if `url` is already hosted on the target CMS host. Compares
+ * the URL's parsed hostname against `siteHostname` exactly (or as a suffix
+ * match for subdomains of the same root). Substring matching on the full
+ * URL would mis-classify `https://evil.com?ref=foo.com` as on-host.
+ */
+function urlIsOnHost(url: string, siteHostname: string): boolean {
+  if (!url || !siteHostname) return false;
+  const normalizedHost = siteHostname.replace(/^https?:\/\//, "").toLowerCase();
+  try {
+    const u = new URL(url);
+    const h = u.hostname.toLowerCase();
+    return h === normalizedHost || h.endsWith(`.${normalizedHost}`);
+  } catch {
+    return false;
+  }
 }
 
 async function reuploadImageIfNeeded(
@@ -41,7 +62,7 @@ async function reuploadImageIfNeeded(
   siteHostname: string,
   alt?: string
 ): Promise<string> {
-  if (imageUrl.includes(siteHostname)) return imageUrl;
+  if (urlIsOnHost(imageUrl, siteHostname)) return imageUrl;
 
   const res = await fetch(imageUrl);
   if (!res.ok) {
@@ -76,9 +97,10 @@ export const publishDraft = inngest.createFunction(
   async ({ event, step }) => {
     const { draftId, jobId } = event.data as { draftId: string; jobId: string };
 
-    // 1. Mark job + draft running, increment publishAttempts (cap at 5).
-    // Returns the new attempt count so we can bail before doing real work
-    // if we've already retried 5 times.
+    // 1. Mark job + draft running, atomically increment publishAttempts.
+    // One UPDATE with `publish_attempts = publish_attempts + 1 RETURNING`
+    // so a partial Inngest retry can't double-count. Returns the NEW
+    // counter so we can bail before doing real work if we're past the cap.
     const attempts = await step.run("mark-running", async () => {
       await db
         .update(jobs)
@@ -89,21 +111,13 @@ export const publishDraft = inngest.createFunction(
         .update(drafts)
         .set({
           status: "publishing",
-          // Drizzle doesn't have a direct increment helper; read-modify-write
-          // is fine here since the publisher is single-threaded per draft.
+          publishAttempts: sql`${drafts.publishAttempts} + 1`,
           updatedAt: new Date(),
         })
         .where(eq(drafts.id, draftId))
-        .returning({
-          attempts: drafts.publishAttempts,
-        });
+        .returning({ attempts: drafts.publishAttempts });
 
-      const next = (row?.attempts ?? 0) + 1;
-      await db
-        .update(drafts)
-        .set({ publishAttempts: next })
-        .where(eq(drafts.id, draftId));
-      return next;
+      return row?.attempts ?? 1;
     });
 
     if (attempts > MAX_PUBLISH_ATTEMPTS) {
@@ -148,20 +162,19 @@ export const publishDraft = inngest.createFunction(
       };
 
       // 3. Capabilities probe (cached). Gates every Phase 3 optional path.
-      // `site` came from an earlier step.run so Inngest has serialized
-      // any Date fields to ISO strings — re-hydrate before passing on.
+      // getCapabilities accepts Date OR string for checkedAt so we don't have
+      // to re-hydrate the Inngest-serialized timestamp here.
       const capabilities = await step.run("load-capabilities", async () => {
-        const checkedAt =
-          site.capabilitiesCheckedAt
-            ? new Date(site.capabilitiesCheckedAt as unknown as string | Date)
-            : null;
-        return getCapabilities({
-          id: site.id,
-          apiBaseUrl: site.apiBaseUrl,
-          kind: site.kind,
-          capabilitiesCache: site.capabilitiesCache,
-          capabilitiesCheckedAt: checkedAt,
-        });
+        return getCapabilities(
+          {
+            id: site.id,
+            apiBaseUrl: site.apiBaseUrl,
+            kind: site.kind,
+            capabilitiesCache: site.capabilitiesCache,
+            capabilitiesCheckedAt: site.capabilitiesCheckedAt,
+          },
+          decryptedApiKey
+        );
       });
 
       // 4. Cover image re-upload (idempotent — already on host means no-op).
@@ -331,9 +344,12 @@ export const publishDraft = inngest.createFunction(
                 : new Date()
               : new Date(),
             ...(canonicalSlug ? { slug: canonicalSlug } : {}),
-            // Clear failure metadata on success.
+            // Clear failure metadata + reset the attempt counter on success
+            // so a future "Republish" gets the full cap (5) instead of
+            // inheriting the previous run's count.
             failureReason: null,
             failureCode: null,
+            publishAttempts: 0,
             updatedAt: new Date(),
           })
           .where(eq(drafts.id, draftId));
@@ -356,8 +372,19 @@ export const publishDraft = inngest.createFunction(
             return { method: "lookup-by-id", ok: true };
           }
           if (publishedUrl) {
-            const r = await fetch(publishedUrl, { method: "GET" });
-            return { method: "fetch-url", ok: r.ok, status: r.status };
+            // 5s timeout — cache warming should not stall the publish job
+            // if the public URL is slow to render.
+            const controller = new AbortController();
+            const t = setTimeout(() => controller.abort(), 5_000);
+            try {
+              const r = await fetch(publishedUrl, {
+                method: "GET",
+                signal: controller.signal,
+              });
+              return { method: "fetch-url", ok: r.ok, status: r.status };
+            } finally {
+              clearTimeout(t);
+            }
           }
           return { method: "skipped", ok: true };
         } catch (e) {

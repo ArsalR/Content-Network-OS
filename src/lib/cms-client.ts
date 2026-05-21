@@ -156,6 +156,10 @@ export function extractInlineImages(
     if (!srcMatch) continue;
     const src = (srcMatch[1] ?? srcMatch[2] ?? srcMatch[3] ?? "").trim();
     if (!src) continue;
+    // Skip data: / blob: URLs — re-uploading them is either unintended
+    // (huge inline blobs blown out of a paste buffer) or impossible (blob
+    // refs are scoped to a different browser tab and won't resolve here).
+    if (/^(?:data|blob):/i.test(src)) continue;
     const altMatch = altRe.exec(tag);
     const alt = (altMatch?.[1] ?? altMatch?.[2] ?? altMatch?.[3] ?? "").trim();
     out.push({ url: src, alt: alt || undefined });
