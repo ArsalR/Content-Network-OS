@@ -9,8 +9,15 @@
 
 import imageSize from "image-size";
 
-export const PINTEREST_TARGET_HEIGHT_TO_WIDTH_RATIO = 1.5; // 3:2 vertical = h/w = 1.5
-export const PINTEREST_RATIO_TOLERANCE = 0.05; // ±5%
+// Acceptable vertical band: 1.4–1.8 (h/w).
+//   1.5  = perfect 2:3 (1000×1500, 1024×1536)
+//   1.75 = DALL-E 3 vertical (1024×1792) — the size we actually request
+//   1.4  = a touch wider than 2:3, still clearly vertical
+// The original ±5% band was too tight: it would have rejected our own
+// image-gen output (DALL-E 1024×1792). Pinterest accepts any clearly
+// vertical pin so we keep the floor at 1.4 (anything squarer fails).
+export const PINTEREST_RATIO_MIN = 1.4;
+export const PINTEREST_RATIO_MAX = 1.8;
 export const PINTEREST_MIN_WIDTH = 800;
 
 /** Result type — `ok` carries the parsed dimensions for callers that want them. */
@@ -56,13 +63,12 @@ export function validatePinterestDimensions(buffer: Buffer): ValidationResult {
   }
 
   const ratio = height / width;
-  const lo = PINTEREST_TARGET_HEIGHT_TO_WIDTH_RATIO * (1 - PINTEREST_RATIO_TOLERANCE);
-  const hi = PINTEREST_TARGET_HEIGHT_TO_WIDTH_RATIO * (1 + PINTEREST_RATIO_TOLERANCE);
-  if (ratio < lo || ratio > hi) {
-    const direction = ratio < 1 ? "too horizontal" : ratio < lo ? "too square" : "too tall";
+  if (ratio < PINTEREST_RATIO_MIN || ratio > PINTEREST_RATIO_MAX) {
+    const direction =
+      ratio < 1 ? "too horizontal" : ratio < PINTEREST_RATIO_MIN ? "not vertical enough" : "too tall";
     return {
       ok: false,
-      error: `Pinterest cover image must be vertical 2:3 ±5% (1.42–1.58 height/width). Got ${width}×${height} (ratio ${ratio.toFixed(
+      error: `Pinterest cover image must be vertical (height/width between ${PINTEREST_RATIO_MIN} and ${PINTEREST_RATIO_MAX}). Got ${width}×${height} (ratio ${ratio.toFixed(
         2
       )}, ${direction}).`,
       width,

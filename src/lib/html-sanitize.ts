@@ -9,11 +9,16 @@
  * Strict allow-list mirrors the Tiptap-generated tag set plus the tags
  * the editor's content can plausibly carry (figures, gallery images, etc).
  * Anything not on the list (script, iframe, style, on* attributes, etc) is
- * stripped.
+ * stripped. DOMPurify's default URI handling blocks `javascript:` and
+ * `vbscript:`; we add an explicit post-processing pass to strip `data:`
+ * and `blob:` URLs from `href` / `src` because DOMPurify trusts data:
+ * URLs for images by default.
  *
- * A DOMPurify `afterSanitizeAttributes` hook upgrades every
- * `<a target="_blank">` to also carry `rel="noopener noreferrer"` to close
- * the reverse-tabnabbing vector.
+ * `target="_blank"` links automatically get `rel="noopener noreferrer"`
+ * injected (via pre-processing, since DOMPurify drops `target` when
+ * `ALLOWED_URI_REGEXP` is configured — setting that option turns out to
+ * also strip non-URI attrs like `target` and `rel`, so we rely on
+ * defaults and pre/post-process for safety).
  */
 
 import DOMPurify from "isomorphic-dompurify";
@@ -31,8 +36,6 @@ const ALLOWED_TAGS: string[] = [
   "br", "span", "mark",
   // Media
   "img", "figure", "figcaption", "picture", "source",
-  // Video kept off-by-default per the brief; uncomment when needed.
-  // "video", "track",
 ];
 
 const ALLOWED_ATTRS: string[] = [
@@ -48,31 +51,55 @@ const ALLOWED_ATTRS: string[] = [
   "srcset", "sizes", "type",
 ];
 
-// URL schemes we allow in href/src. Note: NO data:, NO blob:, NO javascript:,
-// NO vbscript:. Keep this aligned with the comment that motivates it.
-const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|tel):|\/|#|\?)/i;
+/** URL schemes we explicitly strip after sanitize. */
+const FORBIDDEN_URI_SCHEMES = /^\s*(?:data|blob|javascript|vbscript|file):/i;
 
-// Install the hook once on module load. DOMPurify hooks are global per
-// instance, and isomorphic-dompurify reuses the same instance.
-let hooksInstalled = false;
-function ensureHooks() {
-  if (hooksInstalled) return;
-  hooksInstalled = true;
-  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-    // Force every external link to be safe: rel="noopener noreferrer".
-    // Anchors with target="_blank" without noopener allow the new page to
-    // navigate window.opener — reverse tabnabbing.
-    if (node.tagName !== "A") return;
-    const el = node as Element;
-    const target = el.getAttribute("target");
-    if (target === "_blank") {
-      const rel = (el.getAttribute("rel") ?? "").toLowerCase();
-      const tokens = new Set(rel.split(/\s+/).filter(Boolean));
+/**
+ * Pre-process HTML before sanitize: every `<a target="_blank">` gets
+ * `rel="noopener noreferrer"` added (merging into any existing rel).
+ * Doing this BEFORE sanitize means the rel attribute is already in place
+ * and DOMPurify simply keeps it. Reverse-tabnabbing mitigation.
+ */
+function injectSafeRelForBlankTargets(html: string): string {
+  if (!html.toLowerCase().includes("target")) return html;
+  return html.replace(
+    /<a\b([^>]*\btarget\s*=\s*["']?_blank["']?[^>]*)>/gi,
+    (_full, attrs) => {
+      const relMatch = /\brel\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i.exec(attrs);
+      const existingRel = relMatch ? relMatch[1].replace(/^['"]|['"]$/g, "") : "";
+      const tokens = new Set(
+        existingRel.toLowerCase().split(/\s+/).filter(Boolean)
+      );
       tokens.add("noopener");
       tokens.add("noreferrer");
-      el.setAttribute("rel", Array.from(tokens).join(" "));
+      const merged = Array.from(tokens).join(" ");
+      const nextAttrs = relMatch
+        ? attrs.replace(relMatch[0], `rel="${merged}"`)
+        : `${attrs} rel="${merged}"`;
+      return `<a${nextAttrs}>`;
     }
-  });
+  );
+}
+
+/**
+ * Post-process the sanitized HTML to strip any remaining data:/blob:/etc
+ * URLs from href/src. DOMPurify trusts data:image/* URLs by default, but
+ * the brief requires that data: URLs never reach the CMS. We strip the
+ * entire attribute value (replacing with empty) so the element survives
+ * but the unsafe URL doesn't.
+ */
+function stripUnsafeUrlSchemes(html: string): string {
+  // For each src= / href= attribute, if the value starts with a forbidden
+  // scheme, drop the entire attribute. We use a tolerant attribute parser
+  // so quoted (single or double) and unquoted values all work.
+  return html.replace(
+    /\s(src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
+    (full, _name, dq, sq, uq) => {
+      const value = (dq ?? sq ?? uq ?? "").trim();
+      if (FORBIDDEN_URI_SCHEMES.test(value)) return "";
+      return full;
+    }
+  );
 }
 
 /**
@@ -81,15 +108,15 @@ function ensureHooks() {
  */
 export function sanitizeHtml(html: string | null | undefined): string {
   if (!html) return "";
-  ensureHooks();
-  return DOMPurify.sanitize(html, {
+  const preprocessed = injectSafeRelForBlankTargets(html);
+  const sanitized = DOMPurify.sanitize(preprocessed, {
     ALLOWED_TAGS,
     ALLOWED_ATTR: ALLOWED_ATTRS,
-    ALLOWED_URI_REGEXP,
     // Drop the wrapping element when no allowed tag matches — return the text.
     KEEP_CONTENT: true,
     // Don't return DOM; we want a string for Postgres / HTTP body.
     RETURN_DOM: false,
     RETURN_DOM_FRAGMENT: false,
   });
+  return stripUnsafeUrlSchemes(sanitized);
 }
