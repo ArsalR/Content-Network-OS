@@ -23,6 +23,7 @@ import {
   publishDraftNow,
 } from "@/actions/drafts";
 import { CoverImagePicker } from "./cover-image-picker";
+import { SeoPreview } from "./seo-preview";
 
 type DraftStatus =
   | "generating"
@@ -37,6 +38,7 @@ type DraftStatus =
 interface Site {
   id: string;
   name: string;
+  hostname?: string;
 }
 
 interface EditorSidebarProps {
@@ -192,6 +194,17 @@ export function EditorSidebar({
           />
         </div>
       </div>
+
+      {/* SEO Preview — what it'll look like on Google and Pinterest */}
+      <SeoPreview
+        title={title}
+        excerpt={excerpt}
+        seoTitle={seoTitle}
+        seoDescription={seoDescription}
+        slug={slug}
+        coverImageUrl={coverImageUrl}
+        siteHostname={sites.find((s) => s.id === targetSiteId)?.hostname ?? null}
+      />
 
       {/* Cover Image */}
       <div className="border-t border-border pt-4 space-y-3">

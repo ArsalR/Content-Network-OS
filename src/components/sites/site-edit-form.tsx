@@ -16,6 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TestConnectionButton } from "@/components/sites/test-connection-button";
+import { fetchSiteCategories } from "@/actions/sites";
+import { RefreshCw } from "lucide-react";
 
 type SiteKind = "wordpress" | "pinterest-cms";
 
@@ -63,10 +65,34 @@ export function SiteEditForm({ site }: { site: Site }) {
   );
   const [kind, setKind] = useState<SiteKind>(site.kind ?? "wordpress");
   const apiBaseUrlRef = useRef<HTMLInputElement>(null);
+  // Live category list synced from the target CMS. Null means "not synced yet";
+  // empty array means "synced and returned 0".
+  const [syncedCategories, setSyncedCategories] = useState<
+    Array<{ id: string | number; name: string; slug: string }> | null
+  >(null);
+  const [categoryValue, setCategoryValue] = useState<string>(site.defaultCategory ?? "");
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [state, formAction, isPending] = useActionState(
     buildAction(site.id),
     initialState
   );
+
+  async function handleSyncCategories() {
+    setSyncing(true);
+    setSyncError(null);
+    const res = await fetchSiteCategories(site.id);
+    if (res.ok) {
+      setSyncedCategories(res.data);
+      // If the current free-text value matches a real category slug, keep it.
+      // If it doesn't match anything (e.g. the site was reconfigured), the
+      // user will see "Custom: ..." as the selected label and can pick a real
+      // one from the list.
+    } else {
+      setSyncError(res.error);
+    }
+    setSyncing(false);
+  }
 
   function applyPinterestCmsDefault() {
     const host = site.hostname?.trim();
@@ -169,12 +195,80 @@ export function SiteEditForm({ site }: { site: Site }) {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="defaultCategory">Default Category (optional)</Label>
-          <Input
-            id="defaultCategory"
-            name="defaultCategory"
-            defaultValue={site.defaultCategory ?? ""}
-          />
+          <div className="flex items-center justify-between">
+            <Label htmlFor="defaultCategory">
+              Default Category {kind === "pinterest-cms" ? "" : "(optional)"}
+            </Label>
+            {kind === "pinterest-cms" && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSyncCategories}
+                disabled={syncing}
+                className="h-7 gap-1.5"
+              >
+                <RefreshCw
+                  className={`h-3 w-3 ${syncing ? "animate-spin" : ""}`}
+                />
+                {syncing ? "Syncing…" : "Sync categories"}
+              </Button>
+            )}
+          </div>
+
+          {kind === "pinterest-cms" && syncedCategories !== null ? (
+            <>
+              {/* Hidden input carries the controlled value into FormData. */}
+              <input
+                type="hidden"
+                name="defaultCategory"
+                value={categoryValue}
+              />
+              <Select value={categoryValue} onValueChange={setCategoryValue}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Pick a category…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* Allow clearing back to none */}
+                  <SelectItem value="">— None —</SelectItem>
+                  {/* If the current value isn't in the synced list, show it
+                      so the user understands what's about to be saved. */}
+                  {categoryValue &&
+                    !syncedCategories.some((c) => c.slug === categoryValue) && (
+                      <SelectItem value={categoryValue}>
+                        Custom: {categoryValue}
+                      </SelectItem>
+                    )}
+                  {syncedCategories.map((c) => (
+                    <SelectItem key={c.slug} value={c.slug}>
+                      {c.name}{" "}
+                      <span className="text-muted-foreground text-xs">({c.slug})</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Synced from the CMS. Click &quot;Sync categories&quot; to refresh.
+              </p>
+            </>
+          ) : (
+            <Input
+              id="defaultCategory"
+              name="defaultCategory"
+              defaultValue={site.defaultCategory ?? ""}
+              placeholder={
+                kind === "pinterest-cms"
+                  ? "Click 'Sync categories' to pick from a list, or type a slug"
+                  : undefined
+              }
+            />
+          )}
+
+          {syncError && (
+            <p className="text-xs text-destructive">
+              Sync failed: {syncError}
+            </p>
+          )}
         </div>
 
         <div className="space-y-2">

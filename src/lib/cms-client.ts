@@ -75,6 +75,61 @@ export type NormalizedUploadResult = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Cheap HTML → plain-text fallback used to derive a default excerpt when the
+ * draft hasn't been given one. Strips tags, decodes a handful of common
+ * entities, and collapses whitespace. Not a full sanitizer — that's Phase 3.3.
+ */
+function htmlToPlainText(html: string): string {
+  if (!html) return "";
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extract <img src="..." alt="..."> tags from raw HTML in document order.
+ * Used to surface inline images so they can be re-hosted on the target CMS
+ * and end up in the post's `images[]` gallery alongside any
+ * explicitly-attached gallery images.
+ */
+export function extractInlineImages(
+  html: string
+): Array<{ url: string; alt?: string }> {
+  if (!html) return [];
+  const out: Array<{ url: string; alt?: string }> = [];
+  // Matches <img ...> with src + optional alt. Tolerant of attribute order
+  // and quote style.
+  const imgRe = /<img\b[^>]*>/gi;
+  const srcRe = /\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i;
+  const altRe = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*))/i;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null) {
+    const tag = m[0];
+    const srcMatch = srcRe.exec(tag);
+    if (!srcMatch) continue;
+    const src = (srcMatch[1] ?? srcMatch[2] ?? srcMatch[3] ?? "").trim();
+    if (!src) continue;
+    const altMatch = altRe.exec(tag);
+    const alt = (altMatch?.[1] ?? altMatch?.[2] ?? altMatch?.[3] ?? "").trim();
+    out.push({ url: src, alt: alt || undefined });
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Shared network helper
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -330,14 +385,33 @@ async function createPostPinterestCms(
   site: SiteContext,
   post: NormalizedPostInput
 ): Promise<CmsResult<NormalizedPostResult>> {
+  // Phase 2 field mapping with deterministic fall-backs so the CMS gets a
+  // fully populated post even if the draft has gaps.
+
+  // Excerpt: explicit value, else first 160 chars of stripped content text.
+  const resolvedExcerpt =
+    post.excerpt && post.excerpt.trim().length > 0
+      ? post.excerpt.trim()
+      : htmlToPlainText(post.contentHtml).slice(0, 160);
+
+  // Tags from comma-separated seoKeywords.
+  const tags = (post.seoKeywords ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+
+  const resolvedSeoTitle = post.seoTitle ?? post.title;
+  const resolvedSeoDescription = post.seoDescription ?? resolvedExcerpt;
+  const resolvedOgImage = post.ogImage ?? post.coverImageUrl ?? null;
+
   const body: Record<string, unknown> = {
     title: post.title,
     content: post.contentHtml,
     slug: post.slug,
+    excerpt: resolvedExcerpt,
     published: true,
   };
 
-  if (post.excerpt) body.excerpt = post.excerpt;
   if (post.coverImageUrl) body.coverImage = post.coverImageUrl;
 
   if (post.galleryImages && post.galleryImages.length > 0) {
@@ -351,16 +425,22 @@ async function createPostPinterestCms(
 
   if (post.targetCategory) body.category = post.targetCategory.toLowerCase();
 
-  if (post.seoTitle) body.seoTitle = post.seoTitle;
-  if (post.seoDescription) body.seoDescription = post.seoDescription;
-  if (post.seoKeywords) body.seoKeywords = post.seoKeywords;
-  // Open Graph defaults: prefer explicit overrides, else SEO/title fall-through.
-  body.ogTitle = post.ogTitle ?? post.seoTitle ?? post.title;
-  body.ogDescription = post.ogDescription ?? post.seoDescription ?? post.excerpt ?? undefined;
-  if (post.ogImage ?? post.coverImageUrl) {
-    body.ogImage = post.ogImage ?? post.coverImageUrl;
+  // Send tags as the array AND the explicit seoKeywords string so the CMS
+  // gets the same data regardless of which precedence rule wins server-side.
+  if (tags.length > 0) {
+    body.tags = tags;
+    body.seoKeywords = post.seoKeywords ?? tags.join(", ");
+  } else if (post.seoKeywords) {
+    body.seoKeywords = post.seoKeywords;
   }
+
+  body.seoTitle = resolvedSeoTitle;
+  body.seoDescription = resolvedSeoDescription;
+  body.ogTitle = post.ogTitle ?? resolvedSeoTitle;
+  body.ogDescription = post.ogDescription ?? resolvedSeoDescription;
+  if (resolvedOgImage) body.ogImage = resolvedOgImage;
   body.twitterCard = post.twitterCard ?? "summary_large_image";
+
   if (post.canonicalUrl) body.canonicalUrl = post.canonicalUrl;
   if (post.publishedAt) {
     body.publishedAt =

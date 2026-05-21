@@ -26,7 +26,7 @@ export default async function DraftEditorPage({
   });
 
   const allSites = await db
-    .select({ id: sites.id, name: sites.name })
+    .select({ id: sites.id, name: sites.name, hostname: sites.hostname })
     .from(sites)
     .orderBy(sites.name);
 

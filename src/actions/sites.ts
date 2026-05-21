@@ -3,7 +3,8 @@
 import { db } from "@/lib/db";
 import { sites } from "@/db/schema";
 import { encrypt, decrypt } from "@/lib/crypto";
-import { testConnection } from "@/lib/cms-client";
+import { testConnection, getCategories } from "@/lib/cms-client";
+import type { NormalizedCategory } from "@/lib/cms-client";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -184,5 +185,36 @@ export async function testSiteConnection(
     return { ok: true, data: { name } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Connection test failed" };
+  }
+}
+
+/**
+ * Fetch the live category list from a site's CMS so the user can pick from
+ * real options instead of typing a free-text slug. Returns the normalized
+ * `{ id, name, slug }` shape — both dialects produce the same shape.
+ */
+export async function fetchSiteCategories(
+  id: string
+): Promise<
+  | { ok: true; data: NormalizedCategory[] }
+  | { ok: false; error: string }
+> {
+  try {
+    const site = await db.query.sites.findFirst({ where: eq(sites.id, id) });
+    if (!site) return { ok: false, error: "Site not found" };
+
+    const apiKey = decrypt(site.apiKey);
+    const result = await getCategories({
+      apiBaseUrl: site.apiBaseUrl,
+      apiKey,
+      kind: site.kind,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, data: result.data };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to fetch categories",
+    };
   }
 }

@@ -21,6 +21,7 @@ type DraftStatus =
 interface Site {
   id: string;
   name: string;
+  hostname?: string;
 }
 
 interface DraftEditorProps {

@@ -7,6 +7,7 @@ import type {
   NormalizedPostInput,
   SiteContext,
 } from "@/lib/cms-client";
+import { extractInlineImages } from "@/lib/cms-client";
 import { eq } from "drizzle-orm";
 
 type GalleryImageInput = {
@@ -15,6 +16,16 @@ type GalleryImageInput = {
   caption?: string | null;
   order?: number;
 };
+
+/** Replace every <img src="OLD"> with <img src="NEW">, preserving other attrs. */
+function rewriteImgSrc(html: string, oldUrl: string, newUrl: string): string {
+  if (oldUrl === newUrl) return html;
+  // Escape regex metacharacters in the URL before substitution.
+  const escaped = oldUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Match the src attribute value with any quoting and replace just that value.
+  const re = new RegExp(`(<img\\b[^>]*\\bsrc\\s*=\\s*)(?:"${escaped}"|'${escaped}'|${escaped})`, "gi");
+  return html.replace(re, `$1"${newUrl}"`);
+}
 
 /**
  * If `imageUrl` is already hosted on the target CMS hostname we keep it.
@@ -130,6 +141,7 @@ export const publishDraft = inngest.createFunction(
         : [];
 
       const galleryImages: GalleryImageInput[] = [];
+      const seenUrls = new Set<string>();
       for (let i = 0; i < rawGallery.length; i++) {
         const g = rawGallery[i];
         if (!g?.url) continue;
@@ -138,6 +150,8 @@ export const publishDraft = inngest.createFunction(
           return reuploadImageIfNeeded(g.url, siteCtx, site.hostname, g.alt ?? undefined);
         });
 
+        if (seenUrls.has(finalUrl)) continue;
+        seenUrls.add(finalUrl);
         galleryImages.push({
           url: finalUrl,
           alt: g.alt ?? draft.title,
@@ -146,11 +160,38 @@ export const publishDraft = inngest.createFunction(
         });
       }
 
+      // 5b. Extract inline <img> tags from the body, re-host any off-host
+      // ones, rewrite the body to point at the new URLs, and merge them
+      // into the gallery so the CMS's images[] table is complete.
+      const inlineImages = extractInlineImages(draft.contentHtml);
+      let rewrittenContentHtml = draft.contentHtml;
+
+      for (let i = 0; i < inlineImages.length; i++) {
+        const img = inlineImages[i];
+
+        const finalUrl = await step.run(`reupload-inline-${i}`, async () => {
+          return reuploadImageIfNeeded(img.url, siteCtx, site.hostname, img.alt);
+        });
+
+        if (finalUrl !== img.url) {
+          rewrittenContentHtml = rewriteImgSrc(rewrittenContentHtml, img.url, finalUrl);
+        }
+
+        if (seenUrls.has(finalUrl)) continue;
+        seenUrls.add(finalUrl);
+        galleryImages.push({
+          url: finalUrl,
+          alt: img.alt ?? draft.title,
+          caption: null,
+          order: galleryImages.length,
+        });
+      }
+
       // 6. Build normalized post payload (dialect-agnostic).
       const normalized: NormalizedPostInput = {
         title: draft.title,
         slug: draft.slug,
-        contentHtml: draft.contentHtml,
+        contentHtml: rewrittenContentHtml,
         excerpt: draft.excerpt,
         coverImageUrl: finalCoverImageUrl,
         coverImageAlt: draft.coverImageAlt,
@@ -161,6 +202,11 @@ export const publishDraft = inngest.createFunction(
         targetCategory: draft.targetCategory ?? site.defaultCategory,
         // OG/Twitter defaults are filled in by the dialect adapter when null.
         ogImage: finalCoverImageUrl,
+        // Pinterest CMS only uses publishedAt when published=true (which we
+        // set). For "publish now" this is now-ish anyway; for scheduled work
+        // the scheduler will set draft.scheduledFor — pass it through so a
+        // late-running scheduler publish reports the intended timestamp.
+        publishedAt: draft.scheduledFor ?? new Date(),
       };
 
       // 7. Create the post via the dialect-aware client.
