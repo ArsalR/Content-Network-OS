@@ -2,10 +2,16 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CheckCheck, Eye, X, Calendar } from "lucide-react";
-import { moveDraftToReview, approveDraft, rejectDraft } from "@/actions/drafts";
+import { CheckCheck, Eye, X, Calendar, AlertCircle, RotateCw } from "lucide-react";
+import {
+  moveDraftToReview,
+  approveDraft,
+  rejectDraft,
+  publishDraftNow,
+} from "@/actions/drafts";
 
 type DraftStatus =
   | "generating"
@@ -17,7 +23,7 @@ type DraftStatus =
   | "published"
   | "failed";
 
-interface DraftCardProps {
+export interface DraftCardProps {
   id: string;
   title: string;
   projectName: string;
@@ -26,6 +32,11 @@ interface DraftCardProps {
   status: DraftStatus;
   createdAt: Date;
   scheduledFor: Date | null;
+  failureReason?: string | null;
+  failureCode?: string | null;
+  publishAttempts?: number;
+  /** True when scheduledFor is within the next hour (set by KanbanBoard). */
+  isDueSoon?: boolean;
 }
 
 const STATUS_COLORS: Record<DraftStatus, string> = {
@@ -48,7 +59,12 @@ export function DraftCard({
   status,
   createdAt,
   scheduledFor,
+  failureReason,
+  failureCode,
+  publishAttempts,
+  isDueSoon,
 }: DraftCardProps) {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -56,14 +72,29 @@ export function DraftCard({
     setError(null);
     startTransition(async () => {
       const result = await fn();
-      if (!result.ok) {
-        setError(result.error);
-      }
+      if (!result.ok) setError(result.error);
+    });
+  }
+
+  function handleRetry() {
+    setError(null);
+    startTransition(async () => {
+      const result = await publishDraftNow(id);
+      if (!result.ok) setError(result.error);
+      else router.refresh();
     });
   }
 
   return (
-    <div className="rounded-md border border-border bg-card p-3 space-y-2 hover:border-zinc-600 transition-colors">
+    <div
+      className={`rounded-md border p-3 space-y-2 transition-colors ${
+        isDueSoon
+          ? "border-purple-500/50 bg-purple-500/5"
+          : status === "failed"
+            ? "border-red-500/40 bg-red-500/5"
+            : "border-border bg-card hover:border-zinc-600"
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <Link
           href={`/drafts/${id}`}
@@ -78,9 +109,7 @@ export function DraftCard({
 
       <div className="space-y-0.5">
         <p className="text-xs text-muted-foreground">{projectName}</p>
-        {siteName && (
-          <p className="text-xs text-muted-foreground">{siteName}</p>
-        )}
+        {siteName && <p className="text-xs text-muted-foreground">{siteName}</p>}
         {targetCategory && (
           <p className="text-xs text-muted-foreground">{targetCategory}</p>
         )}
@@ -88,12 +117,42 @@ export function DraftCard({
           {createdAt.toLocaleDateString()}
         </p>
         {scheduledFor && (
-          <p className="text-xs text-purple-400 flex items-center gap-1">
+          <p
+            className={`text-xs flex items-center gap-1 ${
+              isDueSoon ? "text-purple-300 font-medium" : "text-purple-400"
+            }`}
+          >
             <Calendar className="h-3 w-3" />
-            {scheduledFor.toLocaleDateString()}
+            {new Date(scheduledFor).toLocaleString()}
           </p>
         )}
       </div>
+
+      {/* Failure surface — only on the Failed column. The `title` attr
+          serves as a tooltip on hover that shows the full reason. */}
+      {status === "failed" && (failureReason || publishAttempts) && (
+        <div
+          className="rounded border border-red-500/40 bg-red-950/40 px-1.5 py-1 text-[10px] text-red-300 leading-snug"
+          title={failureReason ?? undefined}
+        >
+          <div className="flex items-center gap-1">
+            <AlertCircle className="h-3 w-3 shrink-0" />
+            <span className="line-clamp-2 break-words">
+              {failureReason ?? "Publish failed"}
+            </span>
+          </div>
+          {(typeof publishAttempts === "number" || failureCode) && (
+            <div className="mt-0.5 flex items-center gap-1.5 text-[9px] text-red-400/80">
+              {typeof publishAttempts === "number" && (
+                <span>Attempts: {publishAttempts}</span>
+              )}
+              {failureCode && (
+                <span className="font-mono">{failureCode}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && <p className="text-xs text-red-400">{error}</p>}
 
@@ -133,6 +192,18 @@ export function DraftCard({
               Reject
             </Button>
           </>
+        )}
+        {status === "failed" && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2 text-xs gap-1 text-red-300 hover:text-red-200"
+            disabled={isPending}
+            onClick={handleRetry}
+          >
+            <RotateCw className="h-3 w-3" />
+            Retry publish
+          </Button>
         )}
       </div>
     </div>

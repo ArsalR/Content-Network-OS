@@ -156,7 +156,8 @@ export async function rejectDraft(
 
 export async function scheduleDraft(
   id: string,
-  scheduledFor: string
+  scheduledFor: string,
+  timezone?: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const draft = await db.query.drafts.findFirst({ where: eq(drafts.id, id) });
@@ -165,22 +166,81 @@ export async function scheduleDraft(
       return { ok: false, error: `Only approved drafts can be scheduled (current: ${draft.status})` };
     }
 
+    const tz = normalizeTimezone(timezone);
     await db
       .update(drafts)
       .set({
         status: "scheduled",
         scheduledFor: new Date(scheduledFor),
+        scheduledTimezone: tz,
         updatedAt: new Date(),
       })
       .where(eq(drafts.id, id));
 
     revalidatePath(`/drafts/${id}`);
     revalidatePath("/drafts");
+    revalidatePath("/calendar");
 
     return { ok: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : "Failed to schedule draft";
     return { ok: false, error };
+  }
+}
+
+/**
+ * Move an already-scheduled draft to a different time (e.g. via calendar
+ * drag-to-reschedule). Tolerates either a scheduled draft (move) or an
+ * approved draft (schedule fresh) — anything else fails.
+ */
+export async function rescheduleDraft(
+  id: string,
+  scheduledFor: string,
+  timezone?: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const draft = await db.query.drafts.findFirst({ where: eq(drafts.id, id) });
+    if (!draft) return { ok: false, error: "Draft not found" };
+    if (draft.status !== "scheduled" && draft.status !== "approved") {
+      return {
+        ok: false,
+        error: `Only approved or scheduled drafts can be rescheduled (current: ${draft.status})`,
+      };
+    }
+
+    const tz = normalizeTimezone(timezone ?? draft.scheduledTimezone ?? undefined);
+    await db
+      .update(drafts)
+      .set({
+        status: "scheduled",
+        scheduledFor: new Date(scheduledFor),
+        scheduledTimezone: tz,
+        updatedAt: new Date(),
+      })
+      .where(eq(drafts.id, id));
+
+    revalidatePath(`/drafts/${id}`);
+    revalidatePath("/drafts");
+    revalidatePath("/calendar");
+
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Failed to reschedule draft";
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Validate an IANA timezone string. Falls back to "UTC" if missing or
+ * unrecognised. Uses Intl.DateTimeFormat to verify the zone is real.
+ */
+function normalizeTimezone(tz: string | null | undefined): string {
+  if (!tz) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
   }
 }
 
@@ -211,11 +271,16 @@ export async function publishDraftNow(
     if (!draft) return { ok: false, error: "Draft not found" };
     if (!draft.targetSiteId) return { ok: false, error: "Draft has no target site assigned" };
 
-    const allowedStatuses = ["approved", "scheduled"] as const;
+    // Allowed sources for a manual publish:
+    //   - approved/scheduled: the standard happy paths
+    //   - failed: the kanban "Retry publish" button uses this to recover
+    //     a draft that previously failed (publishAttempts/failureReason
+    //     are reset below so the retry gets a fresh budget).
+    const allowedStatuses = ["approved", "scheduled", "failed"] as const;
     if (!(allowedStatuses as readonly string[]).includes(draft.status)) {
       return {
         ok: false,
-        error: `Draft must be approved or scheduled to publish (current: ${draft.status})`,
+        error: `Draft must be approved, scheduled, or failed to publish (current: ${draft.status})`,
       };
     }
 

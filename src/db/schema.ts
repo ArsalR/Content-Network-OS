@@ -166,6 +166,12 @@ export const sites = pgTable("sites", {
   webhookSecret: text("webhook_secret"),
   webhookId: text("webhook_id"),
   rateLimitPausedUntil: timestamp("rate_limit_paused_until"),
+  // Phase 4 — per-site posting cadence (Pinterest performs best with steady
+  // throughput at specific times of day). Shape:
+  //   { window: { hours: number[], days: number[] }, maxPerDay: number, timezone: string }
+  // null means "no cadence configured" — bulk scheduler will distribute
+  // evenly without window-fitting.
+  postingCadence: jsonb("posting_cadence"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -270,6 +276,10 @@ export const drafts = pgTable(
     failureCode: text("failure_code"),
     publishAttempts: integer("publish_attempts").default(0).notNull(),
     lastIdempotencyKey: text("last_idempotency_key"),
+    // Phase 4 — IANA timezone the user picked when scheduling this draft.
+    // scheduledFor itself is always UTC; this is rendered in the UI and
+    // used by the scheduler to honour site posting cadence windows.
+    scheduledTimezone: text("scheduled_timezone"),
     generationCostUsd: numeric("generation_cost_usd", {
       precision: 8,
       scale: 4,

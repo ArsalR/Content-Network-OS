@@ -26,6 +26,9 @@ export default async function DraftsPage() {
       scheduledFor: drafts.scheduledFor,
       projectId: drafts.projectId,
       targetSiteId: drafts.targetSiteId,
+      failureReason: drafts.failureReason,
+      failureCode: drafts.failureCode,
+      publishAttempts: drafts.publishAttempts,
     })
     .from(drafts)
     .orderBy(drafts.createdAt);
@@ -63,6 +66,9 @@ export default async function DraftsPage() {
     status: DraftStatus;
     createdAt: Date;
     scheduledFor: Date | null;
+    failureReason: string | null;
+    failureCode: string | null;
+    publishAttempts: number;
   }>> = {};
 
   for (const draft of allDrafts) {
@@ -79,6 +85,9 @@ export default async function DraftsPage() {
       status,
       createdAt: draft.createdAt,
       scheduledFor: draft.scheduledFor,
+      failureReason: draft.failureReason,
+      failureCode: draft.failureCode,
+      publishAttempts: draft.publishAttempts,
     });
   }
 

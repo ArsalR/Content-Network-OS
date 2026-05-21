@@ -373,7 +373,14 @@ export function EditorSidebar({
               disabled={isPending || !scheduleDate}
               onClick={() =>
                 handleAction(
-                  () => scheduleDraft(draftId, new Date(scheduleDate).toISOString()),
+                  () =>
+                    scheduleDraft(
+                      draftId,
+                      new Date(scheduleDate).toISOString(),
+                      // Stamp the browser's IANA timezone so the calendar
+                      // and scheduler render the time as the user picked it.
+                      Intl.DateTimeFormat().resolvedOptions().timeZone
+                    ),
                   "Draft scheduled"
                 )
               }
