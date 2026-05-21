@@ -56,6 +56,10 @@ interface EditorSidebarProps {
   targetCategory: string | null;
   sites: Site[];
   onFieldChange: (field: string, value: string) => void;
+  // Phase 3: surface publish attempts + last failure info when status=failed
+  publishAttempts?: number;
+  failureReason?: string | null;
+  failureCode?: string | null;
 }
 
 const STATUS_COLORS: Record<DraftStatus, string> = {
@@ -84,6 +88,9 @@ export function EditorSidebar({
   targetCategory,
   sites,
   onFieldChange,
+  publishAttempts,
+  failureReason,
+  failureCode,
 }: EditorSidebarProps) {
   const [isPending, startTransition] = useTransition();
   const [scheduleDate, setScheduleDate] = useState("");
@@ -111,6 +118,29 @@ export function EditorSidebar({
         </span>
         <Badge className={STATUS_COLORS[status]}>{status}</Badge>
       </div>
+
+      {/* Publish failure surface — shown on the 'failed' status so the user
+          can see what went wrong, how many times we've tried, and the typed
+          CMS error code (when features.error_codes is on). */}
+      {status === "failed" && (failureReason || publishAttempts) && (
+        <div className="rounded-md border border-red-500/30 bg-red-500/5 p-2.5 space-y-1 text-xs">
+          {failureReason && (
+            <div className="text-red-300 break-words leading-snug">{failureReason}</div>
+          )}
+          <div className="flex items-center gap-2 text-muted-foreground">
+            {typeof publishAttempts === "number" && publishAttempts > 0 && (
+              <span>
+                Attempt {publishAttempts}/5
+              </span>
+            )}
+            {failureCode && (
+              <span className="rounded bg-red-500/20 px-1.5 py-0.5 font-mono text-[10px] text-red-200">
+                {failureCode}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Title */}
       <div className="space-y-1.5">

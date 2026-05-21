@@ -36,6 +36,7 @@
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.45.2",
     "inngest": "^4.4.0",
+    "isomorphic-dompurify": "^3.14.0",
     "lucide-react": "^0.511.0",
     "marked": "^18.0.3",
     "next": "^15.3.2",

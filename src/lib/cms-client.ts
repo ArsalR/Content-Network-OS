@@ -15,11 +15,33 @@
  */
 
 import { db } from "@/lib/db";
-import { apiCalls } from "@/db/schema";
+import { apiCalls, sites } from "@/db/schema";
+import { mapCmsErrorCode, type CnosCmsError } from "@/lib/cms-errors";
+import { eq } from "drizzle-orm";
 
 export type SiteKind = "wordpress" | "pinterest-cms";
 
-type CmsResult<T> = { ok: true; data: T } | { ok: false; error: string };
+export type CmsResult<T> =
+  | { ok: true; data: T; meta?: CmsResponseMeta }
+  | { ok: false; error: string; meta?: CmsResponseMeta; cmsError?: CnosCmsError };
+
+/**
+ * Per-response metadata surfaced to the caller. Populated only for Pinterest
+ * CMS responses when the relevant features.* flag is on; for WordPress these
+ * are always undefined.
+ */
+export type CmsResponseMeta = {
+  /** Idempotency-Replayed: true means the CMS short-circuited a previous call. */
+  idempotencyReplayed?: boolean;
+  /** Parsed X-RateLimit-Remaining header (numeric). */
+  rateLimitRemaining?: number;
+  /** Parsed X-RateLimit-Reset header (epoch seconds). */
+  rateLimitReset?: number;
+  /** Parsed Retry-After header on a 429 (seconds). */
+  retryAfterSeconds?: number;
+  /** Parsed X-Error-Code header on a 4xx/5xx. */
+  errorCode?: string;
+};
 
 /**
  * Caller-provided site context. We accept a minimal shape so callers can pass
@@ -30,6 +52,18 @@ export type SiteContext = {
   apiBaseUrl: string;
   apiKey: string; // already DECRYPTED — callers must decrypt before invoking
   kind?: SiteKind;
+  /** Site row id — when present, the request layer can update
+   *  sites.rateLimitPausedUntil after reading rate-limit response headers. */
+  id?: string;
+};
+
+/**
+ * Options threaded through to the underlying request. Only used for
+ * pinterest-cms publishes today; ignored by the WordPress adapter.
+ */
+export type PostOptions = {
+  /** Set when features.idempotency is true. */
+  idempotencyKey?: string;
 };
 
 /** Normalised post payload (CNOS-internal shape) — dialect adapters translate this. */
@@ -144,7 +178,93 @@ type RequestArgs = {
   cmsKind?: SiteKind;
   /** Whether this call uploads media (sets apiCalls.kind = "cms_upload"). */
   isUpload?: boolean;
+  /**
+   * If set, sent as the Idempotency-Key header. Callers must only set this
+   * when features.idempotency is true (so we don't pollute CMS logs of CMSes
+   * that don't support it).
+   */
+  idempotencyKey?: string;
+  /**
+   * Site row id — when present we update site.rateLimitPausedUntil after
+   * reading X-RateLimit-* headers (callers gate this via
+   * features.rate_limit_headers, but the helper itself stays a no-op when
+   * the headers aren't present).
+   */
+  siteId?: string;
+  /**
+   * Skip retries entirely (used by capability/lookup probes that should
+   * either succeed or fail fast).
+   */
+  noRetry?: boolean;
 };
+
+/**
+ * Parse the per-request response metadata (rate-limit, idempotency, error
+ * code) from the response headers. Returns undefined if nothing useful is
+ * present.
+ */
+function parseResponseMeta(res: Response): CmsResponseMeta | undefined {
+  const meta: CmsResponseMeta = {};
+  const replayed = res.headers.get("idempotency-replayed");
+  if (replayed && replayed.toLowerCase() === "true") meta.idempotencyReplayed = true;
+
+  const remaining = res.headers.get("x-ratelimit-remaining");
+  if (remaining !== null) {
+    const n = Number(remaining);
+    if (Number.isFinite(n)) meta.rateLimitRemaining = n;
+  }
+  const reset = res.headers.get("x-ratelimit-reset");
+  if (reset !== null) {
+    const n = Number(reset);
+    if (Number.isFinite(n)) meta.rateLimitReset = n;
+  }
+
+  const retryAfter = res.headers.get("retry-after");
+  if (retryAfter !== null) {
+    const n = Number(retryAfter);
+    if (Number.isFinite(n)) meta.retryAfterSeconds = n;
+  }
+
+  const errCode = res.headers.get("x-error-code");
+  if (errCode) meta.errorCode = errCode;
+
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
+/** Best-effort: bump the site's rateLimitPausedUntil when headroom is low. */
+async function maybeUpdateRateLimitPause(
+  siteId: string,
+  meta: CmsResponseMeta | undefined
+): Promise<void> {
+  if (!meta) return;
+  // Pause the scheduler for this site if remaining headroom is below 10 OR
+  // we got a Retry-After (typically on a 429).
+  const lowHeadroom = typeof meta.rateLimitRemaining === "number" && meta.rateLimitRemaining < 10;
+  const reset = meta.rateLimitReset;
+  const retryAfter = meta.retryAfterSeconds;
+  let pausedUntil: Date | null = null;
+  if (retryAfter && retryAfter > 0) {
+    pausedUntil = new Date(Date.now() + retryAfter * 1000);
+  } else if (lowHeadroom && reset && reset > 0) {
+    pausedUntil = new Date(reset * 1000);
+  }
+  if (!pausedUntil) return;
+  try {
+    await db
+      .update(sites)
+      .set({ rateLimitPausedUntil: pausedUntil, updatedAt: new Date() })
+      .where(eq(sites.id, siteId));
+  } catch {
+    /* swallow — diagnostic only */
+  }
+}
+
+/** Sleep with exponential backoff + full jitter (delay = base * 2^n + random(0..base)). */
+function backoffMs(attempt: number): number {
+  const base = 1000;
+  const exp = base * Math.pow(2, attempt);
+  return exp + Math.floor(Math.random() * base);
+}
 
 async function request<T>({
   method,
@@ -155,11 +275,14 @@ async function request<T>({
   isFormData,
   cmsKind,
   isUpload,
+  idempotencyKey,
+  siteId,
+  noRetry,
 }: RequestArgs): Promise<CmsResult<T>> {
   const url = `${apiBaseUrl.replace(/\/$/, "")}${path}`;
   const start = Date.now();
   let attempt = 0;
-  const maxRetries = 2;
+  const maxRetries = noRetry ? 0 : 2;
   const logKind = isUpload ? "cms_upload" : "cms_publish";
 
   while (attempt <= maxRetries) {
@@ -172,6 +295,9 @@ async function request<T>({
       };
       if (!isFormData) {
         headers["Content-Type"] = "application/json";
+      }
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
       }
 
       const res = await fetch(url, {
@@ -187,6 +313,8 @@ async function request<T>({
 
       clearTimeout(timeout);
       const durationMs = Date.now() - start;
+      const meta = parseResponseMeta(res);
+      if (siteId) await maybeUpdateRateLimitPause(siteId, meta);
 
       let data: T;
       const contentType = res.headers.get("content-type") ?? "";
@@ -197,34 +325,86 @@ async function request<T>({
       }
 
       if (!res.ok) {
-        // Pinterest CMS returns `{ error: string }`; WP returns `{ message: string }`.
-        // Try both, then fall back to the raw body or HTTP status.
+        // Pinterest CMS returns `{ error: string }` (plus optional `code`
+        // once features.error_codes ships); WP returns `{ message: string }`.
+        const bodyObj =
+          typeof data === "object" && data !== null
+            ? (data as Record<string, unknown>)
+            : undefined;
         const errorMsg =
           typeof data === "string"
             ? data
-            : ((data as Record<string, unknown>)?.error as string | undefined) ??
-              ((data as Record<string, unknown>)?.message as string | undefined) ??
-              `HTTP ${res.status}`;
+            : ((bodyObj?.error as string | undefined) ??
+              (bodyObj?.message as string | undefined) ??
+              `HTTP ${res.status}`);
+
+        // Prefer header-supplied code (set by features.error_codes), else
+        // body-supplied code. Either may be absent on a pre-features CMS.
+        const code =
+          meta?.errorCode ?? (typeof bodyObj?.code === "string" ? (bodyObj.code as string) : undefined);
+        const cmsError = code
+          ? mapCmsErrorCode(code, errorMsg, {
+              httpStatus: res.status,
+              retryAfterSeconds: meta?.retryAfterSeconds,
+              raw: bodyObj,
+            })
+          : undefined;
 
         await db.insert(apiCalls).values({
           kind: logKind,
           status: "error",
           durationMs,
           errorMessage: errorMsg,
-          metadata: { method, url, statusCode: res.status, cmsKind },
+          metadata: {
+            method,
+            url,
+            statusCode: res.status,
+            cmsKind,
+            errorCode: code,
+            ...(meta?.rateLimitRemaining !== undefined
+              ? { rateLimitRemaining: meta.rateLimitRemaining }
+              : {}),
+            ...(meta?.idempotencyReplayed ? { idempotencyReplayed: true } : {}),
+          },
         });
 
-        return { ok: false, error: errorMsg };
+        // Retry rules:
+        //   - 5xx: yes
+        //   - 429: yes (so we re-attempt after the Retry-After pause is set)
+        //   - 4xx (other): no — fail fast with the typed error
+        const shouldRetry =
+          (res.status >= 500 || res.status === 429) && attempt < maxRetries;
+        if (shouldRetry) {
+          // If the CMS gave us Retry-After, honour it; else jittered backoff.
+          const wait =
+            res.status === 429 && meta?.retryAfterSeconds
+              ? meta.retryAfterSeconds * 1000
+              : backoffMs(attempt);
+          await new Promise((r) => setTimeout(r, wait));
+          attempt++;
+          continue;
+        }
+
+        return { ok: false, error: errorMsg, meta, cmsError };
       }
 
       await db.insert(apiCalls).values({
         kind: logKind,
         status: "success",
         durationMs,
-        metadata: { method, url, statusCode: res.status, cmsKind },
+        metadata: {
+          method,
+          url,
+          statusCode: res.status,
+          cmsKind,
+          ...(meta?.idempotencyReplayed ? { idempotencyReplayed: true } : {}),
+          ...(meta?.rateLimitRemaining !== undefined
+            ? { rateLimitRemaining: meta.rateLimitRemaining }
+            : {}),
+        },
       });
 
-      return { ok: true, data };
+      return { ok: true, data, meta };
     } catch (err) {
       clearTimeout(timeout);
       const isNetworkError =
@@ -245,8 +425,8 @@ async function request<T>({
         return { ok: false, error: errorMsg };
       }
 
-      // Exponential backoff: 1s, 2s.
-      await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+      // Exponential backoff with jitter (1s±, 2s±).
+      await new Promise((r) => setTimeout(r, backoffMs(attempt)));
       attempt++;
     }
   }
@@ -373,17 +553,19 @@ export async function listPosts(
 
 export async function createPost(
   site: SiteContext,
-  post: NormalizedPostInput
+  post: NormalizedPostInput,
+  options?: PostOptions
 ): Promise<CmsResult<NormalizedPostResult>> {
   const kind = site.kind ?? "wordpress";
   return kind === "pinterest-cms"
-    ? createPostPinterestCms(site, post)
+    ? createPostPinterestCms(site, post, options)
     : createPostWordpress(site, post);
 }
 
 async function createPostPinterestCms(
   site: SiteContext,
-  post: NormalizedPostInput
+  post: NormalizedPostInput,
+  options?: PostOptions
 ): Promise<CmsResult<NormalizedPostResult>> {
   // Phase 2 field mapping with deterministic fall-backs so the CMS gets a
   // fully populated post even if the draft has gaps.
@@ -459,6 +641,8 @@ async function createPostPinterestCms(
     path: "/posts",
     body,
     cmsKind: "pinterest-cms",
+    idempotencyKey: options?.idempotencyKey,
+    siteId: site.id,
   });
   if (!res.ok) return res;
   if (!res.data?.post?.id || !res.data?.post?.slug || !res.data?.post?.url) {
@@ -466,6 +650,7 @@ async function createPostPinterestCms(
   }
   return {
     ok: true,
+    meta: res.meta,
     data: {
       id: res.data.post.id,
       slug: res.data.post.slug,
@@ -521,7 +706,8 @@ async function createPostWordpress(
 export async function updatePost(
   site: SiteContext,
   postId: string | number,
-  post: Partial<NormalizedPostInput>
+  post: Partial<NormalizedPostInput>,
+  options?: PostOptions
 ): Promise<CmsResult<NormalizedPostResult>> {
   const kind = site.kind ?? "wordpress";
 
@@ -564,6 +750,8 @@ export async function updatePost(
       path: `/posts/${postId}`,
       body,
       cmsKind: kind,
+      idempotencyKey: options?.idempotencyKey,
+      siteId: site.id,
     });
     if (!res.ok) return res;
     if (!res.data?.post?.id || !res.data?.post?.slug || !res.data?.post?.url) {
@@ -571,6 +759,7 @@ export async function updatePost(
     }
     return {
       ok: true,
+      meta: res.meta,
       data: {
         id: res.data.post.id,
         slug: res.data.post.slug,
@@ -710,5 +899,131 @@ export async function uploadFile(
       mediaId: res.data?.id !== undefined ? String(res.data.id) : undefined,
       raw: res.data as unknown as Record<string, unknown>,
     },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 — capability-gated helpers (Pinterest CMS only)
+//
+// Each helper MUST be called only after the caller has confirmed the
+// corresponding feature flag via getCapabilities(). Calling them against a
+// CMS that doesn't support the capability will return a clean "ok: false"
+// (so callers can fall back) but will still log an apiCalls error row.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Look up a post on the CMS by its slug. Use when CNOS has a draft.slug but
+ * no publishedPostId (e.g. crashed mid-publish) to recover and switch to PUT.
+ *
+ * Requires features.slug_lookup. Returns:
+ *  - { ok: true, data: { id, slug, url } | null } — null = not found
+ *  - { ok: false, error } — network / 5xx error
+ */
+export async function findPostBySlug(
+  site: SiteContext,
+  slug: string
+): Promise<CmsResult<{ id: string; slug: string; url: string } | null>> {
+  type Resp = {
+    success?: boolean;
+    posts?: Array<{ id: string; slug: string; url: string }>;
+  };
+  const res = await request<Resp>({
+    method: "GET",
+    apiBaseUrl: site.apiBaseUrl,
+    apiKey: site.apiKey,
+    path: `/posts?slug=${encodeURIComponent(slug)}`,
+    cmsKind: site.kind ?? "pinterest-cms",
+    siteId: site.id,
+    noRetry: true,
+  });
+  if (!res.ok) return res;
+  const first = res.data?.posts?.[0];
+  return { ok: true, data: first ? { id: first.id, slug: first.slug, url: first.url } : null };
+}
+
+/**
+ * Fetch a single post by id. Use for the cache-warm step after a successful
+ * publish (faster + more authoritative than re-fetching the public URL).
+ *
+ * Requires features.single_post_lookup.
+ */
+export async function getPostById(
+  site: SiteContext,
+  postId: string
+): Promise<CmsResult<{ id: string; slug: string; url: string; published?: boolean } | null>> {
+  type Resp = {
+    success?: boolean;
+    post?: { id: string; slug: string; url: string; published?: boolean };
+  };
+  const res = await request<Resp>({
+    method: "GET",
+    apiBaseUrl: site.apiBaseUrl,
+    apiKey: site.apiKey,
+    path: `/posts/${encodeURIComponent(postId)}`,
+    cmsKind: site.kind ?? "pinterest-cms",
+    siteId: site.id,
+    noRetry: true,
+  });
+  if (!res.ok) return res;
+  return {
+    ok: true,
+    data: res.data?.post
+      ? {
+          id: res.data.post.id,
+          slug: res.data.post.slug,
+          url: res.data.post.url,
+          published: res.data.post.published,
+        }
+      : null,
+  };
+}
+
+/**
+ * Register a webhook on the CMS. The CMS returns the signing secret ONCE
+ * (Stripe-style). Caller must capture and persist it (encrypted) on the
+ * site row — failure to do so makes future webhook signature verification
+ * impossible.
+ *
+ * Requires features.webhooks.
+ */
+export async function registerWebhook(
+  site: SiteContext,
+  args: { url: string; events: string[] }
+): Promise<CmsResult<{ id: string; secret: string }>> {
+  // The /admin/webhooks endpoint lives at the host root (not under
+  // /api/public/v1). Derive the host-root URL and pass it as apiBaseUrl
+  // so request() builds the right absolute URL.
+  let hostRoot: string;
+  try {
+    const u = new URL(site.apiBaseUrl);
+    hostRoot = `${u.protocol}//${u.host}`;
+  } catch {
+    return { ok: false, error: `Invalid apiBaseUrl: ${site.apiBaseUrl}` };
+  }
+
+  type Resp = {
+    success?: boolean;
+    webhook?: { id: string; secret: string };
+  };
+  const res = await request<Resp>({
+    method: "POST",
+    apiBaseUrl: hostRoot,
+    apiKey: site.apiKey,
+    path: "/admin/webhooks",
+    body: args,
+    cmsKind: "pinterest-cms",
+    siteId: site.id,
+    noRetry: true,
+  });
+  if (!res.ok) return res;
+  if (!res.data?.webhook?.id || !res.data?.webhook?.secret) {
+    return {
+      ok: false,
+      error: `Malformed registerWebhook response: ${JSON.stringify(res.data)}`,
+    };
+  }
+  return {
+    ok: true,
+    data: { id: res.data.webhook.id, secret: res.data.webhook.secret },
   };
 }

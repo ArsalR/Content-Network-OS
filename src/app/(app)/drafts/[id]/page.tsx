@@ -72,6 +72,9 @@ export default async function DraftEditorPage({
         initialCoverImageAlt={draft.coverImageAlt}
         initialTargetSiteId={draft.targetSiteId}
         initialTargetCategory={draft.targetCategory}
+        publishAttempts={draft.publishAttempts}
+        failureReason={draft.failureReason}
+        failureCode={draft.failureCode}
         status={draft.status}
         sites={allSites}
       />

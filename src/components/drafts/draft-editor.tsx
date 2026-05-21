@@ -37,6 +37,10 @@ interface DraftEditorProps {
   initialCoverImageAlt: string | null;
   initialTargetSiteId: string | null;
   initialTargetCategory: string | null;
+  // Phase 3: read-only publish telemetry passed through to the sidebar.
+  publishAttempts?: number;
+  failureReason?: string | null;
+  failureCode?: string | null;
   status: DraftStatus;
   sites: Site[];
 }
@@ -54,6 +58,9 @@ export function DraftEditor({
   initialCoverImageAlt,
   initialTargetSiteId,
   initialTargetCategory,
+  publishAttempts,
+  failureReason,
+  failureCode,
   status,
   sites,
 }: DraftEditorProps) {
@@ -184,6 +191,9 @@ export function DraftEditor({
             targetCategory={fields.targetCategory}
             sites={sites}
             onFieldChange={handleFieldChange}
+            publishAttempts={publishAttempts}
+            failureReason={failureReason}
+            failureCode={failureCode}
           />
         </div>
       </div>

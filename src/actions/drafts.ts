@@ -6,6 +6,7 @@ import { inngest } from "@/lib/inngest";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { searchPhotos } from "@/lib/pexels-client";
+import { sanitizeHtml } from "@/lib/html-sanitize";
 
 export async function enqueueGeneration(
   briefId: string
@@ -88,7 +89,11 @@ export async function updateDraft(
         ...(title != null && { title }),
         ...(slug != null && { slug }),
         ...(excerpt != null && { excerpt }),
-        ...(contentHtml != null && { contentHtml }),
+        // Sanitize at the source — any tag the editor produces survives the
+        // allow-list, but <script>, on*= handlers, javascript: URLs etc are
+        // stripped before they hit the DB. publish-draft re-sanitizes as
+        // defence-in-depth.
+        ...(contentHtml != null && { contentHtml: sanitizeHtml(contentHtml) }),
         ...(seoTitle != null && { seoTitle }),
         ...(seoDescription != null && { seoDescription }),
         ...(seoKeywords != null && { seoKeywords }),
@@ -221,9 +226,16 @@ export async function publishDraftNow(
 
     await inngest.send({ name: "draft/publish", data: { draftId: id, jobId: job.id } });
 
+    // Manual republish: clear the stored idempotency key so publishDraft
+    // generates a fresh one (each user-initiated republish should be a
+    // distinct CMS-side operation, not a replay).
     await db
       .update(drafts)
-      .set({ status: "publishing", updatedAt: new Date() })
+      .set({
+        status: "publishing",
+        lastIdempotencyKey: null,
+        updatedAt: new Date(),
+      })
       .where(eq(drafts.id, id));
 
     revalidatePath(`/drafts/${id}`);

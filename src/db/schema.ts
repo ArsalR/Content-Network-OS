@@ -157,6 +157,15 @@ export const sites = pgTable("sites", {
   pinterestSectionPromptExtra: text("pinterest_section_prompt_extra"),
   pinterestContentStyle: text("pinterest_content_style"),
   pinterestImageSize: text("pinterest_image_size").default("1000x1500"),
+  // Phase 3 — runtime capabilities probe cache (24h TTL via capabilitiesCheckedAt),
+  // encrypted per-site webhook secret + CMS-side webhook id (so we can
+  // deregister later), and a scheduler pause floor honored when the CMS
+  // signals low rate-limit headroom.
+  capabilitiesCache: jsonb("capabilities_cache"),
+  capabilitiesCheckedAt: timestamp("capabilities_checked_at"),
+  webhookSecret: text("webhook_secret"),
+  webhookId: text("webhook_id"),
+  rateLimitPausedUntil: timestamp("rate_limit_paused_until"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -254,6 +263,13 @@ export const drafts = pgTable(
     publishedPostId: text("published_post_id"),
     publishedUrl: text("published_url"),
     failureReason: text("failure_reason"),
+    // Phase 3 — typed CMS error code (when features.error_codes is on),
+    // attempt counter (capped at 5 in publishDraft) and the idempotency key
+    // currently in flight (reused across Inngest retries of one attempt,
+    // regenerated when the user manually clicks "republish").
+    failureCode: text("failure_code"),
+    publishAttempts: integer("publish_attempts").default(0).notNull(),
+    lastIdempotencyKey: text("last_idempotency_key"),
     generationCostUsd: numeric("generation_cost_usd", {
       precision: 8,
       scale: 4,
@@ -318,4 +334,15 @@ export const jobs = pgTable(
     index("jobs_status_idx").on(t.status),
     index("jobs_created_at_idx").on(t.createdAt),
   ]
+);
+
+// Phase 3 — webhook delivery dedupe. PK is the X-CMS-Delivery header value.
+// Periodically pruned by the receiver to avoid unbounded growth.
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    receivedAt: timestamp("received_at").defaultNow().notNull(),
+  },
+  (t) => [index("webhook_deliveries_received_at_idx").on(t.receivedAt)]
 );
