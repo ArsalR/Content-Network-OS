@@ -42,6 +42,7 @@ export default async function SiteEditPage({
           pinterestSectionPromptExtra: site.pinterestSectionPromptExtra ?? null,
           pinterestContentStyle: site.pinterestContentStyle ?? null,
           pinterestImageSize: site.pinterestImageSize ?? "1000x1500",
+          postingCadence: site.postingCadence ?? null,
         }}
       />
     </div>

@@ -311,3 +311,67 @@ export async function fetchSiteCategories(
     };
   }
 }
+
+/**
+ * Pinterest cadence preset — widely-cited "best times to post" windows.
+ * Times use the site's existing timezone-of-record if known, else 'UTC'.
+ * Calling this is idempotent — it overwrites whatever cadence was there.
+ */
+export async function applyPinterestCadencePreset(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const site = await db.query.sites.findFirst({ where: eq(sites.id, id) });
+    if (!site) return { ok: false, error: "Site not found" };
+
+    const existing = (site.postingCadence ?? {}) as Record<string, unknown>;
+    const existingTz =
+      typeof existing.timezone === "string" && existing.timezone
+        ? existing.timezone
+        : "UTC";
+
+    const preset = {
+      window: {
+        // Pin-friendly hours (in the site's timezone). Source: widely-cited
+        // analyses of mid-day / evening engagement spikes on Pinterest.
+        hours: [8, 12, 14, 20, 22],
+        // 0=Sunday … 6=Saturday — Pinterest performs every day of the week.
+        days: [0, 1, 2, 3, 4, 5, 6],
+      },
+      maxPerDay: 5,
+      timezone: existingTz,
+      preset: "pinterest",
+    };
+
+    await db
+      .update(sites)
+      .set({ postingCadence: preset, updatedAt: new Date() })
+      .where(eq(sites.id, id));
+
+    revalidatePath(`/sites/${id}`);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to apply cadence preset",
+    };
+  }
+}
+
+export async function clearPostingCadence(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await db
+      .update(sites)
+      .set({ postingCadence: null, updatedAt: new Date() })
+      .where(eq(sites.id, id));
+    revalidatePath(`/sites/${id}`);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to clear cadence",
+    };
+  }
+}

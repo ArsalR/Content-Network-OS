@@ -16,8 +16,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TestConnectionButton } from "@/components/sites/test-connection-button";
-import { fetchSiteCategories } from "@/actions/sites";
-import { RefreshCw } from "lucide-react";
+import {
+  fetchSiteCategories,
+  applyPinterestCadencePreset,
+  clearPostingCadence,
+} from "@/actions/sites";
+import { RefreshCw, CalendarClock, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 type SiteKind = "wordpress" | "pinterest-cms";
 
@@ -37,6 +42,7 @@ type Site = {
   pinterestSectionPromptExtra?: string | null;
   pinterestContentStyle?: string | null;
   pinterestImageSize?: string | null;
+  postingCadence?: unknown;
 };
 
 type ActionState =
@@ -441,12 +447,135 @@ export function SiteEditForm({ site }: { site: Site }) {
         </div>
       </form>
 
+      <PostingCadencePanel siteId={site.id} initial={site.postingCadence ?? null} />
+
       <div className="border-t border-border pt-6">
         <h3 className="mb-3 text-sm font-medium text-foreground">
           Connection
         </h3>
         <TestConnectionButton siteId={site.id} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Compact panel showing the current posting cadence (read-only summary)
+ * and a one-click button to apply / clear the Pinterest preset. Lives
+ * outside the main form because the preset is its own server action.
+ */
+type CadencePresetShape = {
+  window?: { hours?: number[]; days?: number[] };
+  maxPerDay?: number;
+  timezone?: string;
+  preset?: string;
+};
+
+function PostingCadencePanel({
+  siteId,
+  initial,
+}: {
+  siteId: string;
+  initial: unknown;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  // Read once from the server prop; we re-render via router.refresh after
+  // a write so the panel reflects the latest stored cadence.
+  const cadence = (initial && typeof initial === "object"
+    ? (initial as CadencePresetShape)
+    : null) as CadencePresetShape | null;
+
+  async function handleApply() {
+    setBusy(true);
+    const res = await applyPinterestCadencePreset(siteId);
+    setBusy(false);
+    if (res.ok) {
+      toast.success("Pinterest cadence preset applied");
+      router.refresh();
+    } else {
+      toast.error(res.error);
+    }
+  }
+
+  async function handleClear() {
+    setBusy(true);
+    const res = await clearPostingCadence(siteId);
+    setBusy(false);
+    if (res.ok) {
+      toast.success("Posting cadence cleared");
+      router.refresh();
+    } else {
+      toast.error(res.error);
+    }
+  }
+
+  const hours = cadence?.window?.hours ?? [];
+  const days = cadence?.window?.days ?? [];
+  const isPinterestPreset = cadence?.preset === "pinterest";
+
+  return (
+    <div className="border-t border-border pt-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
+          <CalendarClock className="h-4 w-4" />
+          Posting cadence
+        </h3>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={handleApply}
+            className="h-7"
+          >
+            {isPinterestPreset ? "Re-apply Pinterest preset" : "Apply Pinterest preset"}
+          </Button>
+          {cadence && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={handleClear}
+              className="h-7 text-muted-foreground hover:text-foreground"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {cadence ? (
+        <div className="rounded-md border border-border bg-card p-3 space-y-1 text-xs text-muted-foreground">
+          <div>
+            <span className="text-foreground font-medium">Hours:</span>{" "}
+            {hours.length ? hours.map((h) => `${h.toString().padStart(2, "0")}:00`).join(", ") : "—"}
+          </div>
+          <div>
+            <span className="text-foreground font-medium">Days:</span>{" "}
+            {days.length === 7
+              ? "Every day"
+              : days.map((d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]).join(", ")}
+          </div>
+          <div>
+            <span className="text-foreground font-medium">Max per day:</span>{" "}
+            {cadence.maxPerDay ?? "—"}
+          </div>
+          <div>
+            <span className="text-foreground font-medium">Timezone:</span>{" "}
+            {cadence.timezone ?? "UTC"}
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          No cadence configured. The Pinterest preset uses widely-cited
+          high-engagement hours (08:00, 12:00, 14:00, 20:00, 22:00) every
+          day with a maxPerDay of 5.
+        </p>
+      )}
     </div>
   );
 }

@@ -280,6 +280,12 @@ export const drafts = pgTable(
     // scheduledFor itself is always UTC; this is rendered in the UI and
     // used by the scheduler to honour site posting cadence windows.
     scheduledTimezone: text("scheduled_timezone"),
+    // Phase 5 — Pinterest-specific meta generated alongside the article
+    // body. Shape: { title: string, description: string, hashtags: string[] }
+    // At publish time for Pinterest-mode sites these flow into ogTitle /
+    // ogDescription / seoKeywords on the CMS so the Pinterest crawler
+    // gets pin-friendly text.
+    pinterestMeta: jsonb("pinterest_meta"),
     generationCostUsd: numeric("generation_cost_usd", {
       precision: 8,
       scale: 4,

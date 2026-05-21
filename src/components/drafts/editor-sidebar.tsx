@@ -22,6 +22,7 @@ import {
   scheduleDraft,
   unscheduleDraft,
   publishDraftNow,
+  cloneDraftForRepublish,
 } from "@/actions/drafts";
 import { MAX_PUBLISH_ATTEMPTS } from "@/lib/publish-constants";
 import { CoverImagePicker } from "./cover-image-picker";
@@ -422,6 +423,28 @@ export function EditorSidebar({
             }
           >
             Cancel Schedule
+          </Button>
+        )}
+
+        {status === "published" && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full"
+            disabled={isPending}
+            onClick={() =>
+              startTransition(async () => {
+                const r = await cloneDraftForRepublish(draftId);
+                if (r.ok) {
+                  toast.success("Republish draft created");
+                  router.push(`/drafts/${r.data.id}`);
+                } else {
+                  toast.error(r.error);
+                }
+              })
+            }
+          >
+            Republish as new draft
           </Button>
         )}
       </div>

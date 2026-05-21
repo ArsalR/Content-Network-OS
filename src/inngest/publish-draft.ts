@@ -13,8 +13,15 @@ import { getCapabilities } from "@/lib/cms-capabilities";
 import { sanitizeHtml } from "@/lib/html-sanitize";
 import { CnosCmsError } from "@/lib/cms-errors";
 import { MAX_PUBLISH_ATTEMPTS } from "@/lib/publish-constants";
+import { validatePinterestDimensions } from "@/lib/image-validation";
 import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+
+type PinterestMeta = {
+  title?: string | null;
+  description?: string | null;
+  hashtags?: string[] | null;
+};
 
 type GalleryImageInput = {
   url: string;
@@ -177,6 +184,36 @@ export const publishDraft = inngest.createFunction(
         );
       });
 
+      // 3a. Pinterest cover validation — Pinterest-mode sites refuse any
+      // cover image that isn't ≈2:3 vertical AND ≥800px wide. Catch this
+      // before we waste a CMS upload or generate a bad pin. Fail with a
+      // typed code so the kanban Failed card surfaces it cleanly.
+      if (site.pinterestMode && draft.coverImageUrl) {
+        const dimsCheck = await step.run("validate-cover-dimensions", async () => {
+          try {
+            const r = await fetch(draft.coverImageUrl!);
+            if (!r.ok) {
+              return {
+                ok: false as const,
+                error: `Could not fetch cover image (${r.status})`,
+              };
+            }
+            const buf = Buffer.from(await r.arrayBuffer());
+            return validatePinterestDimensions(buf);
+          } catch (e) {
+            return {
+              ok: false as const,
+              error: `Cover image fetch failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            };
+          }
+        });
+        if (!dimsCheck.ok) {
+          throw new PublishFailure(dimsCheck.error, "pinterest_cover_invalid");
+        }
+      }
+
       // 4. Cover image re-upload (idempotent — already on host means no-op).
       let finalCoverImageUrl: string | null = draft.coverImageUrl ?? null;
       if (finalCoverImageUrl) {
@@ -246,7 +283,23 @@ export const publishDraft = inngest.createFunction(
       // pass here protects against any direct DB writes elsewhere.)
       const sanitizedContentHtml = sanitizeHtml(rewrittenContentHtml);
 
-      // 6. Build the normalized payload (dialect-agnostic).
+      // 6. Build the normalized payload (dialect-agnostic). For Pinterest-mode
+      // sites with a populated pinterestMeta, the OG fields are overridden by
+      // the pin-friendly meta and hashtags are appended to seoKeywords so the
+      // Pinterest crawler sees the optimized text.
+      const pinterestMeta: PinterestMeta | null =
+        site.pinterestMode && draft.pinterestMeta
+          ? (draft.pinterestMeta as PinterestMeta)
+          : null;
+
+      const baseSeoKeywords = (draft.seoKeywords ?? "").trim();
+      const hashtags = (pinterestMeta?.hashtags ?? [])
+        .map((h) => h.trim().replace(/^#+/, ""))
+        .filter(Boolean);
+      const mergedSeoKeywords = hashtags.length
+        ? [baseSeoKeywords, hashtags.join(", ")].filter(Boolean).join(", ")
+        : baseSeoKeywords || null;
+
       const normalized: NormalizedPostInput = {
         title: draft.title,
         slug: draft.slug,
@@ -257,8 +310,10 @@ export const publishDraft = inngest.createFunction(
         galleryImages,
         seoTitle: draft.seoTitle,
         seoDescription: draft.seoDescription,
-        seoKeywords: draft.seoKeywords,
+        seoKeywords: mergedSeoKeywords,
         targetCategory: draft.targetCategory ?? site.defaultCategory,
+        ogTitle: pinterestMeta?.title ?? null,
+        ogDescription: pinterestMeta?.description ?? null,
         ogImage: finalCoverImageUrl,
         publishedAt: draft.scheduledFor ?? new Date(),
       };

@@ -59,6 +59,37 @@ export function removeCoverImagePromptLine(markdown: string): string {
     .join("\n");
 }
 
+/**
+ * Find the nearest H2/H3 heading PRECEDING a given image prompt in the
+ * markdown body. Used to build richer alt text like `"<heading>: <prompt>"`
+ * for Pinterest section images — including the H2 context measurably
+ * helps Pinterest's accessibility-driven ranking.
+ *
+ * Returns the heading text (without the leading `##` / `###`) or null
+ * if no heading exists above this prompt.
+ */
+export function findSectionHeadingForImagePrompt(
+  markdown: string,
+  promptNumber: number
+): string | null {
+  const lines = markdown.split("\n");
+  let lastHeading: string | null = null;
+  const promptRe = new RegExp(
+    `^\\s*\\[(?:Section\\s+)?Image Prompt\\s*${promptNumber}\\]`,
+    "i"
+  );
+  for (const line of lines) {
+    // ## Heading  or  ### Heading  — capture text after the marker.
+    const headingMatch = line.match(/^\s*#{2,3}\s+(.+?)\s*$/);
+    if (headingMatch) {
+      lastHeading = headingMatch[1].trim();
+      continue;
+    }
+    if (promptRe.test(line)) return lastHeading;
+  }
+  return null;
+}
+
 export function extractItemCountFromTitle(title: string): number {
   const m = title.match(/\b(\d+)\b/);
   if (m) {

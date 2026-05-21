@@ -1,5 +1,6 @@
 import { generateImageDalle } from "./dalle-client";
 import { generateImageGemini } from "./gemini-client";
+import { validatePinterestDimensions } from "@/lib/image-validation";
 
 export type ImageGenResult =
   | { ok: true; imageBuffer: Buffer; mimeType: string }
@@ -28,6 +29,21 @@ export async function generateImage(
       : await generateImageDalle(fullPrompt, dalleSize);
 
   if (!result.ok) return result;
+
+  // Pinterest mode: hard-fail any generation request that didn't produce a
+  // 2:3 ±5% image. This catches provider drift (e.g. DALL-E returning
+  // square despite the 1024x1792 size request) before we waste a CMS
+  // upload + a publish on a non-conforming pin.
+  if (pinterestMode) {
+    const dimsCheck = validatePinterestDimensions(result.imageBuffer);
+    if (!dimsCheck.ok) {
+      return {
+        ok: false,
+        error: `Pinterest image rejected by validator: ${dimsCheck.error}`,
+      };
+    }
+  }
+
   return {
     ok: true,
     imageBase64: result.imageBuffer.toString("base64"),

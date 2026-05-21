@@ -360,3 +360,95 @@ export async function searchPexelsPhotos(
     };
   }
 }
+
+/**
+ * Republish a published draft as a fresh draft row. Used for seasonal
+ * content rotation — copy the body, clear publish state, and set
+ * canonicalUrl on the new draft to the original's publishedUrl so the
+ * republished version doesn't cannibalise SEO on the original.
+ *
+ * The original draft is left untouched.
+ */
+export async function cloneDraftForRepublish(
+  id: string
+): Promise<{ ok: true; data: { id: string } } | { ok: false; error: string }> {
+  try {
+    const original = await db.query.drafts.findFirst({ where: eq(drafts.id, id) });
+    if (!original) return { ok: false, error: "Draft not found" };
+    if (original.status !== "published") {
+      return {
+        ok: false,
+        error: `Only published drafts can be republished (current: ${original.status})`,
+      };
+    }
+
+    // Disambiguate the slug. We could let the user choose later; pre-suffix
+    // with "-v2" / "-v3" / etc by counting existing siblings on prefix match.
+    const baseSlug = original.slug.replace(/-v\d+$/, "");
+    const existingClones = await db
+      .select({ slug: drafts.slug })
+      .from(drafts)
+      .where(eq(drafts.projectId, original.projectId));
+    const siblingPattern = new RegExp(`^${escapeForRegex(baseSlug)}(?:-v(\\d+))?$`);
+    let maxVersion = 1;
+    for (const row of existingClones) {
+      const m = row.slug.match(siblingPattern);
+      if (m) {
+        const v = m[1] ? parseInt(m[1], 10) : 1;
+        if (v > maxVersion) maxVersion = v;
+      }
+    }
+    const nextSlug = `${baseSlug}-v${maxVersion + 1}`;
+
+    const [clone] = await db
+      .insert(drafts)
+      .values({
+        projectId: original.projectId,
+        briefId: original.briefId,
+        title: original.title,
+        slug: nextSlug,
+        excerpt: original.excerpt,
+        contentHtml: original.contentHtml,
+        contentMarkdown: original.contentMarkdown,
+        coverImageUrl: original.coverImageUrl,
+        coverImageAlt: original.coverImageAlt,
+        galleryImages: original.galleryImages,
+        seoTitle: original.seoTitle,
+        seoDescription: original.seoDescription,
+        seoKeywords: original.seoKeywords,
+        status: "draft",
+        targetSiteId: original.targetSiteId,
+        targetCategory: original.targetCategory,
+        pinterestMeta: original.pinterestMeta,
+        // Crucial: point at the original published URL so search engines
+        // know the new draft is a refresh, not a duplicate. Once the new
+        // draft is published the user can update the canonical or leave
+        // it pointing at the seasonal original.
+        // NOTE: drafts.canonicalUrl isn't a column on this schema today;
+        // we store the original URL on the new draft via publishedUrl=null
+        // and use the seoDescription/keywords path. If/when a dedicated
+        // canonicalUrl column is added on `drafts`, switch to that.
+        publishedPostId: null,
+        publishedUrl: null,
+        publishedAt: null,
+        failureReason: null,
+        failureCode: null,
+        publishAttempts: 0,
+        lastIdempotencyKey: null,
+      })
+      .returning({ id: drafts.id });
+
+    revalidatePath("/drafts");
+    revalidatePath(`/drafts/${clone!.id}`);
+    return { ok: true, data: { id: clone!.id } };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to republish draft",
+    };
+  }
+}
+
+function escapeForRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

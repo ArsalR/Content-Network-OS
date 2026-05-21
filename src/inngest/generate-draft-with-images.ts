@@ -11,6 +11,7 @@ import {
   extractItemCountFromTitle,
   extractCoverImagePrompt,
   removeCoverImagePromptLine,
+  findSectionHeadingForImagePrompt,
 } from "@/lib/article-parser";
 import { eq } from "drizzle-orm";
 
@@ -255,11 +256,23 @@ Output full Markdown only. No JSON, no preamble.`;
       // In non-Pinterest mode the first section image doubles as the cover (legacy behaviour).
       if (!coverImageUrl) coverImageUrl = uploadedUrl;
 
+      // Richer alt text: prefix with the preceding H2/H3 heading when one
+      // exists in the source markdown. Helps Pinterest's accessibility
+      // ranking AND general SEO; harmless for non-Pinterest publishes.
+      const sectionHeading = findSectionHeadingForImagePrompt(
+        articleMarkdown,
+        prompt.number
+      );
+      const altDescriptor = prompt.text.slice(0, 80);
+      const altText = sectionHeading
+        ? `${sectionHeading}: ${altDescriptor}`
+        : `Image ${prompt.number}: ${altDescriptor}`;
+
       processedMarkdown = replaceImagePromptWithImg(
         processedMarkdown,
         prompt.number,
         uploadedUrl,
-        `Image ${prompt.number}: ${prompt.text.slice(0, 60)}`
+        altText
       );
     }
 
@@ -276,6 +289,21 @@ Output full Markdown only. No JSON, no preamble.`;
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
 
+    // 9b. Pinterest meta — pin-friendly title (≤100 chars, benefit-led),
+    // description (200–500 chars, keyword-rich), and 3–6 lowercase
+    // hashtags. Only generated when the article is Pinterest-bound; falls
+    // back to null on any LLM failure so the draft still saves successfully.
+    const pinterestMeta = pinterestMode
+      ? await step.run("generate-pinterest-meta", async () => {
+          return generatePinterestMeta({
+            jobId,
+            title,
+            keyword,
+            articleMarkdown: processedMarkdown,
+          });
+        })
+      : null;
+
     // 10. Save draft
     const draftId = await step.run("save-draft", async () => {
       const [draft] = await db
@@ -290,6 +318,7 @@ Output full Markdown only. No JSON, no preamble.`;
           status: "draft",
           targetSiteId: siteId,
           generationModel: "gpt-4o-mini",
+          pinterestMeta: pinterestMeta ?? undefined,
         })
         .returning({ id: drafts.id });
 
@@ -314,3 +343,81 @@ Output full Markdown only. No JSON, no preamble.`;
     return { draftId };
   }
 );
+
+/**
+ * Pinterest meta generator. Asks the LLM for a JSON object with
+ * pin-friendly title / description / hashtags. Always returns the same
+ * shape (with empty strings / arrays on failure) so callers don't have
+ * to differentiate "no key" from "model error".
+ */
+async function generatePinterestMeta(args: {
+  jobId: string;
+  title: string;
+  keyword: string;
+  articleMarkdown: string;
+}): Promise<{
+  title: string;
+  description: string;
+  hashtags: string[];
+} | null> {
+  // Truncate the article to keep the prompt small — the first ~500 words
+  // carry the topic + intro which is enough for the model to pin-summarize.
+  const excerpt = args.articleMarkdown
+    .replace(/\[(?:Section\s+)?(?:Image|Cover Image) Prompt[^\]]*\][^\n]*/gi, "")
+    .replace(/^#+\s+/gm, "")
+    .replace(/\n{2,}/g, "\n\n")
+    .trim()
+    .slice(0, 2400);
+
+  const prompt = `Generate Pinterest pin meta for this article. Return STRICT JSON only:
+
+{
+  "title": "string (≤100 chars, benefit-led, no trailing punctuation, no emoji)",
+  "description": "string (200–500 chars, keyword-rich but conversational; works as a Pinterest pin description)",
+  "hashtags": ["3 to 6 lowercase hashtags without the # prefix and without spaces"]
+}
+
+Article title: ${args.title}
+Target keyword: ${args.keyword}
+
+Article excerpt:
+${excerpt}`;
+
+  const result = await generate(prompt, {
+    driverId: args.jobId,
+    systemPrompt:
+      "You are a Pinterest SEO assistant. Output only the JSON object. No prose, no markdown fences.",
+  });
+  if (!result.ok) return null;
+
+  // Tolerate accidental markdown fences from the model.
+  const cleaned = result.text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```$/, "")
+    .trim();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+
+  const titleOut =
+    typeof obj.title === "string" ? obj.title.trim().slice(0, 100) : "";
+  const descriptionOut =
+    typeof obj.description === "string" ? obj.description.trim().slice(0, 600) : "";
+  const hashtagsOut = Array.isArray(obj.hashtags)
+    ? obj.hashtags
+        .filter((h): h is string => typeof h === "string")
+        .map((h) => h.trim().replace(/^#+/, "").toLowerCase().replace(/\s+/g, ""))
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+
+  if (!titleOut && !descriptionOut && hashtagsOut.length === 0) return null;
+  return { title: titleOut, description: descriptionOut, hashtags: hashtagsOut };
+}
