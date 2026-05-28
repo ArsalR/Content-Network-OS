@@ -117,6 +117,28 @@ First section body.
   it("returns null for a prompt number that doesn't exist", () => {
     expect(findSectionHeadingForImagePrompt(md, 99)).toBeNull();
   });
+
+  it("ignores ## headings inside fenced code blocks", () => {
+    const mdWithFence = `## Real Section
+
+\`\`\`md
+## fake heading inside fence
+\`\`\`
+
+[Image Prompt 1] should use the real heading`;
+    expect(findSectionHeadingForImagePrompt(mdWithFence, 1)).toBe("Real Section");
+  });
+
+  it("ignores ## inside tilde-fenced blocks", () => {
+    const mdWithFence = `## Real
+
+~~~
+## fake
+~~~
+
+[Image Prompt 1] x`;
+    expect(findSectionHeadingForImagePrompt(mdWithFence, 1)).toBe("Real");
+  });
 });
 
 describe("extractItemCountFromTitle", () => {

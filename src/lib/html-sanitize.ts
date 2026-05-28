@@ -64,7 +64,7 @@ function injectSafeRelForBlankTargets(html: string): string {
   if (!html.toLowerCase().includes("target")) return html;
   return html.replace(
     /<a\b([^>]*\btarget\s*=\s*["']?_blank["']?[^>]*)>/gi,
-    (_full, attrs) => {
+    (_full: string, attrs: string) => {
       const relMatch = /\brel\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i.exec(attrs);
       const existingRel = relMatch ? relMatch[1].replace(/^['"]|['"]$/g, "") : "";
       const tokens = new Set(
@@ -83,23 +83,62 @@ function injectSafeRelForBlankTargets(html: string): string {
 
 /**
  * Post-process the sanitized HTML to strip any remaining data:/blob:/etc
- * URLs from href/src. DOMPurify trusts data:image/* URLs by default, but
- * the brief requires that data: URLs never reach the CMS. We strip the
- * entire attribute value (replacing with empty) so the element survives
- * but the unsafe URL doesn't.
+ * URLs from href/src/srcset. DOMPurify trusts data:image/* URLs by
+ * default, but the brief requires that data: URLs never reach the CMS.
+ *
+ * For `src` / `href`: drop the entire attribute if the value uses a
+ * forbidden scheme.
+ *
+ * For `srcset` (comma-separated `url [descriptor]` pairs): drop any
+ * candidate whose URL uses a forbidden scheme; drop the whole attribute
+ * if no safe candidates remain.
  */
 function stripUnsafeUrlSchemes(html: string): string {
-  // For each src= / href= attribute, if the value starts with a forbidden
-  // scheme, drop the entire attribute. We use a tolerant attribute parser
-  // so quoted (single or double) and unquoted values all work.
-  return html.replace(
+  // src / href: tolerant attribute parser (quoted or unquoted).
+  let out = html.replace(
     /\s(src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
-    (full, _name, dq, sq, uq) => {
-      const value = (dq ?? sq ?? uq ?? "").trim();
+    (
+      full: string,
+      _name: string,
+      dq: string | undefined,
+      sq: string | undefined,
+      uq: string | undefined
+    ) => {
+      const value: string = (dq ?? sq ?? uq ?? "").trim();
       if (FORBIDDEN_URI_SCHEMES.test(value)) return "";
       return full;
     }
   );
+
+  // srcset: parse the comma-separated candidate list and drop any
+  // candidate whose URL portion uses a forbidden scheme. If no safe
+  // candidates remain, drop the whole attribute.
+  out = out.replace(
+    /\ssrcset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
+    (
+      _full: string,
+      dq: string | undefined,
+      sq: string | undefined,
+      uq: string | undefined
+    ) => {
+      const raw: string = (dq ?? sq ?? uq ?? "").trim();
+      if (!raw) return "";
+      const safe = raw
+        .split(",")
+        .map((c: string) => c.trim())
+        .filter((c: string) => c.length > 0)
+        .filter((candidate: string) => {
+          // Each candidate is "url [descriptor]" — URL is the first
+          // whitespace-delimited token.
+          const url = candidate.split(/\s+/)[0] ?? "";
+          return !FORBIDDEN_URI_SCHEMES.test(url);
+        });
+      if (safe.length === 0) return "";
+      return ` srcset="${safe.join(", ")}"`;
+    }
+  );
+
+  return out;
 }
 
 /**

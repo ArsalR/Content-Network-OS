@@ -201,20 +201,32 @@ export async function rescheduleDraft(
   try {
     const draft = await db.query.drafts.findFirst({ where: eq(drafts.id, id) });
     if (!draft) return { ok: false, error: "Draft not found" };
-    if (draft.status !== "scheduled" && draft.status !== "approved") {
+    // Allowed sources:
+    //   - scheduled / approved: the standard happy paths
+    //   - failed: the user dragged a failed draft on the calendar to give
+    //     it a new schedule slot. Reset failure metadata so the next
+    //     attempt starts clean.
+    const allowed = ["scheduled", "approved", "failed"] as const;
+    if (!(allowed as readonly string[]).includes(draft.status)) {
       return {
         ok: false,
-        error: `Only approved or scheduled drafts can be rescheduled (current: ${draft.status})`,
+        error: `Only approved, scheduled, or failed drafts can be rescheduled (current: ${draft.status})`,
       };
     }
 
     const tz = normalizeTimezone(timezone ?? draft.scheduledTimezone ?? undefined);
+    const wasFailed = draft.status === "failed";
     await db
       .update(drafts)
       .set({
         status: "scheduled",
         scheduledFor: new Date(scheduledFor),
         scheduledTimezone: tz,
+        // When rescheduling a previously-failed draft, clear the failure
+        // metadata so the editor sidebar / kanban don't show stale errors.
+        ...(wasFailed
+          ? { failureReason: null, failureCode: null }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(drafts.id, id));
@@ -382,65 +394,94 @@ export async function cloneDraftForRepublish(
       };
     }
 
-    // Disambiguate the slug. We could let the user choose later; pre-suffix
-    // with "-v2" / "-v3" / etc by counting existing siblings on prefix match.
-    const baseSlug = original.slug.replace(/-v\d+$/, "");
-    const existingClones = await db
-      .select({ slug: drafts.slug })
-      .from(drafts)
-      .where(eq(drafts.projectId, original.projectId));
-    const siblingPattern = new RegExp(`^${escapeForRegex(baseSlug)}(?:-v(\\d+))?$`);
-    let maxVersion = 1;
-    for (const row of existingClones) {
-      const m = row.slug.match(siblingPattern);
-      if (m) {
-        const v = m[1] ? parseInt(m[1], 10) : 1;
-        if (v > maxVersion) maxVersion = v;
+    // Strip ALL trailing `-vN` segments greedily so cloning a "foo-v3"
+    // becomes "foo" (base) → "foo-vN+1", not "foo-v3-vN+1".
+    const baseSlug = original.slug.replace(/(?:-v\d+)+$/, "");
+
+    // Retry-loop the version pick: between SELECT-and-INSERT another tab
+    // can claim the same -vN. We re-fetch + bump version until our INSERT
+    // produces a row, capped at a few tries so we never spin forever.
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const siblings = await db
+        .select({ slug: drafts.slug })
+        .from(drafts)
+        .where(eq(drafts.projectId, original.projectId));
+
+      const siblingPattern = new RegExp(
+        `^${escapeForRegex(baseSlug)}(?:-v(\\d+))?$`
+      );
+      let maxVersion = 1;
+      for (const row of siblings) {
+        const m = row.slug.match(siblingPattern);
+        if (m) {
+          const v = m[1] ? parseInt(m[1], 10) : 1;
+          if (v > maxVersion) maxVersion = v;
+        }
+      }
+      const candidateSlug = `${baseSlug}-v${maxVersion + 1 + attempt}`;
+
+      // Re-check existence inside the same loop iteration to narrow the
+      // race window. If a peer claimed it just now, retry with a higher
+      // version on the next iteration. Once we have a UNIQUE(projectId,
+      // slug) constraint we'll switch to onConflictDoNothing for atomic
+      // claim, but that schema change is out of scope here.
+      const taken = siblings.some((s) => s.slug === candidateSlug);
+      if (taken) continue;
+
+      try {
+        const [clone] = await db
+          .insert(drafts)
+          .values({
+            projectId: original.projectId,
+            briefId: original.briefId,
+            title: original.title,
+            slug: candidateSlug,
+            excerpt: original.excerpt,
+            contentHtml: original.contentHtml,
+            contentMarkdown: original.contentMarkdown,
+            coverImageUrl: original.coverImageUrl,
+            coverImageAlt: original.coverImageAlt,
+            galleryImages: original.galleryImages,
+            seoTitle: original.seoTitle,
+            seoDescription: original.seoDescription,
+            seoKeywords: original.seoKeywords,
+            status: "draft",
+            targetSiteId: original.targetSiteId,
+            targetCategory: original.targetCategory,
+            pinterestMeta: original.pinterestMeta,
+            // NOTE: drafts.canonicalUrl isn't a column on this schema today.
+            // If/when added, set canonicalUrl = original.publishedUrl here.
+            publishedPostId: null,
+            publishedUrl: null,
+            publishedAt: null,
+            failureReason: null,
+            failureCode: null,
+            publishAttempts: 0,
+            lastIdempotencyKey: null,
+          })
+          .returning({ id: drafts.id });
+
+        revalidatePath("/drafts");
+        revalidatePath(`/drafts/${clone!.id}`);
+        return { ok: true, data: { id: clone!.id } };
+      } catch (err) {
+        // Likely a unique-violation if the constraint exists; retry with a
+        // higher version. Any other error breaks out.
+        const code =
+          (err as { code?: string; cause?: { code?: string } })?.code ??
+          (err as { cause?: { code?: string } })?.cause?.code;
+        if (code !== "23505") throw err;
+        lastError = err;
       }
     }
-    const nextSlug = `${baseSlug}-v${maxVersion + 1}`;
 
-    const [clone] = await db
-      .insert(drafts)
-      .values({
-        projectId: original.projectId,
-        briefId: original.briefId,
-        title: original.title,
-        slug: nextSlug,
-        excerpt: original.excerpt,
-        contentHtml: original.contentHtml,
-        contentMarkdown: original.contentMarkdown,
-        coverImageUrl: original.coverImageUrl,
-        coverImageAlt: original.coverImageAlt,
-        galleryImages: original.galleryImages,
-        seoTitle: original.seoTitle,
-        seoDescription: original.seoDescription,
-        seoKeywords: original.seoKeywords,
-        status: "draft",
-        targetSiteId: original.targetSiteId,
-        targetCategory: original.targetCategory,
-        pinterestMeta: original.pinterestMeta,
-        // Crucial: point at the original published URL so search engines
-        // know the new draft is a refresh, not a duplicate. Once the new
-        // draft is published the user can update the canonical or leave
-        // it pointing at the seasonal original.
-        // NOTE: drafts.canonicalUrl isn't a column on this schema today;
-        // we store the original URL on the new draft via publishedUrl=null
-        // and use the seoDescription/keywords path. If/when a dedicated
-        // canonicalUrl column is added on `drafts`, switch to that.
-        publishedPostId: null,
-        publishedUrl: null,
-        publishedAt: null,
-        failureReason: null,
-        failureCode: null,
-        publishAttempts: 0,
-        lastIdempotencyKey: null,
-      })
-      .returning({ id: drafts.id });
-
-    revalidatePath("/drafts");
-    revalidatePath(`/drafts/${clone!.id}`);
-    return { ok: true, data: { id: clone!.id } };
+    return {
+      ok: false,
+      error: `Couldn't allocate a unique slug for republish after 10 attempts. ${
+        lastError instanceof Error ? lastError.message : ""
+      }`,
+    };
   } catch (err) {
     return {
       ok: false,

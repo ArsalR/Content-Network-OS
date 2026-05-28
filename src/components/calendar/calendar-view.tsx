@@ -181,9 +181,7 @@ export function CalendarView({
     const draft = items.find((i) => i.id === draftId);
     if (!draft) return;
 
-    // Preserve the original time-of-day; only the date changes. This is
-    // the least-surprising behaviour for drag-rescheduling — the user
-    // can fine-tune the time from the editor sidebar.
+    // Preserve the original time-of-day; only the date changes.
     const original = new Date(draft.scheduledForIso);
     const next = new Date(day);
     next.setHours(
@@ -193,8 +191,15 @@ export function CalendarView({
       original.getMilliseconds()
     );
 
-    // No-op if dropped on the same day.
-    if (isSameDay(original, next)) return;
+    // No-op only when the user dropped on the same calendar cell as the
+    // draft currently occupies. Comparing `next` against `original` is
+    // wrong for cross-midnight UTC drafts: setHours can push `next` into
+    // a different local-day than the drop target, masking real moves.
+    // Compare the drop target (`day`) against the draft's bucket key
+    // directly — that's exactly the cell the chip rendered in.
+    const draftBucketKey = format(original, "yyyy-MM-dd");
+    const dropBucketKey = format(day, "yyyy-MM-dd");
+    if (draftBucketKey === dropBucketKey) return;
 
     startTransition(async () => {
       const tz =

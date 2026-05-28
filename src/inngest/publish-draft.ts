@@ -14,7 +14,7 @@ import { sanitizeHtml } from "@/lib/html-sanitize";
 import { CnosCmsError } from "@/lib/cms-errors";
 import { MAX_PUBLISH_ATTEMPTS } from "@/lib/publish-constants";
 import { validatePinterestDimensions } from "@/lib/image-validation";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 type PinterestMeta = {
@@ -385,8 +385,13 @@ export const publishDraft = inngest.createFunction(
       // 9. Persist publish results (unless this was a replay — then the
       // previous publish already wrote them and we just confirm). Always
       // persist publishedPostId so future retries hit the PUT path.
+      //
+      // The WHERE clause requires status='publishing' so the deadletter
+      // can't lost-update us: if publishingDeadletter flipped us back to
+      // 'scheduled' while we were running, this UPDATE matches 0 rows
+      // and we surface that as an error rather than silently overwriting.
       await step.run("mark-published", async () => {
-        await db
+        const written = await db
           .update(drafts)
           .set({
             status: "published",
@@ -407,7 +412,18 @@ export const publishDraft = inngest.createFunction(
             publishAttempts: 0,
             updatedAt: new Date(),
           })
-          .where(eq(drafts.id, draftId));
+          .where(and(eq(drafts.id, draftId), eq(drafts.status, "publishing")))
+          .returning({ id: drafts.id });
+
+        if (written.length === 0) {
+          // Deadletter (or another writer) snatched the row from under us.
+          // Surface a clear error; the post IS published on the CMS so the
+          // operator can manually reconcile.
+          throw new Error(
+            `mark-published lost-update: draft ${draftId} was not in 'publishing' state. ` +
+              `Post ${publishedPostId} exists on the CMS — manually reconcile.`
+          );
+        }
 
         await db
           .update(jobs)
@@ -452,6 +468,18 @@ export const publishDraft = inngest.createFunction(
       const failureReason = err instanceof Error ? err.message : "Unknown error";
       const failureCode = errorCodeFor(err);
 
+      // For deterministic / user-fixable failures we DON'T want to burn one
+      // of the 5 retry budgets — the user will edit the draft and click
+      // Retry and that should give them a fresh attempt. Decrement the
+      // counter we bumped at mark-running so the user's effective budget
+      // is preserved.
+      const isUserFixable =
+        failureCode === "pinterest_cover_invalid" ||
+        failureCode === "validation" ||
+        failureCode === "slug_conflict" ||
+        failureCode === "auth_invalid_key" ||
+        failureCode === "auth_insufficient_permission";
+
       await step.run("mark-failed", async () => {
         await db
           .update(drafts)
@@ -459,6 +487,9 @@ export const publishDraft = inngest.createFunction(
             status: "failed",
             failureReason,
             failureCode,
+            ...(isUserFixable
+              ? { publishAttempts: sql`GREATEST(${drafts.publishAttempts} - 1, 0)` }
+              : {}),
             updatedAt: new Date(),
           })
           .where(eq(drafts.id, draftId));

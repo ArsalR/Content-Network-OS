@@ -1,9 +1,10 @@
 /**
  * Pinterest image-dimension validation.
  *
- * Pinterest rewards vertical 2:3 imagery. We accept anything between
- * 1.45 and 1.6 in the height:width ratio (≈2:3 ±5%) AND at least 800px
- * wide. Both image-gen output and the cover-at-publish-time checks call
+ * Pinterest rewards vertical imagery. We accept anything with a
+ * height:width ratio between 1.4 and 1.8 (covers 2:3, 3:5, and DALL-E
+ * 3's native 1024×1792 vertical at 1.75) AND at least 800px wide. Both
+ * image-gen output and the cover-at-publish-time checks call
  * `validatePinterestDimensions` so the rules live in exactly one place.
  */
 
@@ -28,7 +29,7 @@ export type ValidationResult =
 /**
  * Validate that the given image buffer is acceptable for a Pinterest pin.
  *
- *   - Aspect ratio (height / width) within ±5% of 1.5 (i.e. 2:3 vertical)
+ *   - Aspect ratio (height / width) between 1.4 and 1.8 (≈2:3–4:7 vertical)
  *   - Width >= 800px so the pin doesn't render blurry in the feed
  *
  * Uses `image-size` which only reads the file header — fast and stable.

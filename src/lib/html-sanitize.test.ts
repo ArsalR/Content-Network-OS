@@ -61,6 +61,34 @@ describe("sanitizeHtml", () => {
     });
   });
 
+  describe("srcset stripping", () => {
+    it("drops a data: candidate from srcset", () => {
+      const out = sanitizeHtml(
+        '<img srcset="https://x.com/a.png 1x, data:image/png;base64,zzz 2x">'
+      );
+      expect(out.toLowerCase()).not.toContain("data:");
+      expect(out).toContain("https://x.com/a.png 1x");
+    });
+
+    it("drops the whole srcset when every candidate is unsafe", () => {
+      const out = sanitizeHtml(
+        '<img srcset="data:image/png;base64,a 1x, blob:b 2x">'
+      );
+      expect(out.toLowerCase()).not.toContain("data:");
+      expect(out.toLowerCase()).not.toContain("blob:");
+      expect(out.toLowerCase()).not.toContain("srcset");
+    });
+
+    it("preserves safe srcset entirely", () => {
+      const out = sanitizeHtml(
+        '<img srcset="https://x.com/a.png 1x, https://x.com/b.png 2x">'
+      );
+      expect(out).toContain("srcset=");
+      expect(out).toContain("https://x.com/a.png 1x");
+      expect(out).toContain("https://x.com/b.png 2x");
+    });
+  });
+
   describe("target=_blank rel enforcement", () => {
     it("adds noopener noreferrer when target=_blank is set", () => {
       const out = sanitizeHtml('<a href="https://ok.com" target="_blank">x</a>');

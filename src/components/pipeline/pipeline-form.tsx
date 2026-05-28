@@ -55,13 +55,16 @@ function parseKeywordsFromCsv(text: string): string[] {
   return keywords;
 }
 
-/** Build a flat IdeaRow[] from the server's grouped result. */
+/** Build a flat IdeaRow[] from the server's grouped result. Each row gets
+ *  a unique key so re-rolls produce fresh keys — React can't reuse the
+ *  old <input> elements (which would silently preserve any inline edit
+ *  the user made before re-rolling). */
 function ideaRowsFromExpansion(expansion: ExpandedSeed[]): IdeaRow[] {
   const rows: IdeaRow[] = [];
   for (const group of expansion) {
     for (let i = 0; i < group.ideas.length; i++) {
       rows.push({
-        key: `${group.seed}#${i}`,
+        key: makeIdeaRowKey(),
         seed: group.seed,
         title: group.ideas[i],
         selected: true, // default everything checked; user un-checks the ones they don't want
@@ -69,6 +72,15 @@ function ideaRowsFromExpansion(expansion: ExpandedSeed[]): IdeaRow[] {
     }
   }
   return rows;
+}
+
+/** Monotonic-ish unique key for an IdeaRow. crypto.randomUUID would do but
+ *  isn't worth the import here — a 36-bit suffix is more than enough for a
+ *  list of at most 20 × 40 = 800 rows. */
+let ideaRowKeyCounter = 0;
+function makeIdeaRowKey(): string {
+  ideaRowKeyCounter += 1;
+  return `r${ideaRowKeyCounter}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 export function PipelineForm({ sites, projects, tones }: Props) {

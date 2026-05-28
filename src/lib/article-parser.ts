@@ -65,6 +65,10 @@ export function removeCoverImagePromptLine(markdown: string): string {
  * for Pinterest section images — including the H2 context measurably
  * helps Pinterest's accessibility-driven ranking.
  *
+ * Tracks fenced code blocks (``` and ~~~) so headings that appear inside
+ * a code block (e.g. a markdown sample showing `## fake heading`) don't
+ * pollute the section context.
+ *
  * Returns the heading text (without the leading `##` / `###`) or null
  * if no heading exists above this prompt.
  */
@@ -74,11 +78,29 @@ export function findSectionHeadingForImagePrompt(
 ): string | null {
   const lines = markdown.split("\n");
   let lastHeading: string | null = null;
+  let insideFence = false;
+  let fenceMarker: "```" | "~~~" | null = null;
   const promptRe = new RegExp(
     `^\\s*\\[(?:Section\\s+)?Image Prompt\\s*${promptNumber}\\]`,
     "i"
   );
   for (const line of lines) {
+    // Toggle fence state on a matching ``` or ~~~ line. Mismatched
+    // fences (open with ```, close with ~~~) are treated as still open
+    // until the matching marker, which is how CommonMark renders.
+    const fenceMatch = line.match(/^(\s*)(```|~~~)/);
+    if (fenceMatch) {
+      const marker = fenceMatch[2] as "```" | "~~~";
+      if (!insideFence) {
+        insideFence = true;
+        fenceMarker = marker;
+      } else if (marker === fenceMarker) {
+        insideFence = false;
+        fenceMarker = null;
+      }
+      continue;
+    }
+    if (insideFence) continue;
     // ## Heading  or  ### Heading  — capture text after the marker.
     const headingMatch = line.match(/^\s*#{2,3}\s+(.+?)\s*$/);
     if (headingMatch) {

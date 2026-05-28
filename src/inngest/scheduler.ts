@@ -23,7 +23,7 @@ import { inngest } from "@/lib/inngest";
 import { db } from "@/lib/db";
 import { drafts, jobs, sites } from "@/db/schema";
 import { env } from "@/lib/env";
-import { eq, lte, gte, and, isNull, or, inArray, sql } from "drizzle-orm";
+import { eq, lte, and, isNull, or, inArray, sql } from "drizzle-orm";
 
 const PUBLISHING_STUCK_AFTER_MS = 15 * 60 * 1000;
 const REQUEUE_DELAY_MS = 5 * 60 * 1000;
@@ -72,10 +72,33 @@ async function enqueueOne(draftId: string): Promise<boolean> {
     .values({ kind: "publish-draft", status: "queued", inputId: draftId })
     .returning({ id: jobs.id });
 
-  await inngest.send({
-    name: "draft/publish",
-    data: { draftId, jobId: job.id },
-  });
+  try {
+    await inngest.send({
+      name: "draft/publish",
+      data: { draftId, jobId: job.id },
+    });
+  } catch (err) {
+    // If the Inngest send fails (network blip, key rotation, etc.) the
+    // draft would be stuck in "publishing" with no job ever firing. Roll
+    // back the claim so the deadletter doesn't have to wait 15 min, and
+    // mark the job failed for visibility.
+    await db
+      .update(drafts)
+      .set({ status: "scheduled", updatedAt: new Date() })
+      .where(and(eq(drafts.id, draftId), eq(drafts.status, "publishing")));
+    await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        errorMessage:
+          err instanceof Error
+            ? `inngest.send failed: ${err.message}`
+            : "inngest.send failed",
+        completedAt: new Date(),
+      })
+      .where(eq(jobs.id, job.id));
+    return false;
+  }
   return true;
 }
 
@@ -211,8 +234,7 @@ export const publishingDeadletter = inngest.createFunction(
         .where(
           and(
             eq(drafts.status, "publishing"),
-            lte(drafts.updatedAt, cutoff),
-            gte(drafts.publishAttempts, 0) // no-op condition; keeps the join shape consistent
+            lte(drafts.updatedAt, cutoff)
           )
         )
         .returning({ id: drafts.id });
