@@ -1,4 +1,5 @@
 import { env } from "@/lib/env";
+import { getApiKey } from "@/lib/api-keys";
 
 type ImageGenResult =
   | { ok: true; imageBuffer: Buffer; mimeType: string }
@@ -13,8 +14,14 @@ export async function generateImageDalle(
   prompt: string,
   sizeOverride?: string
 ): Promise<ImageGenResult> {
-  if (!env.OPENAI_API_KEY) {
-    return { ok: false, error: "OpenAI API key not configured" };
+  // DB-first (Settings → API Keys) → env fallback.
+  const apiKey = await getApiKey("OPENAI_API_KEY");
+  if (!apiKey) {
+    return {
+      ok: false,
+      error:
+        "OpenAI API key not configured. Add it at Settings → API Keys, or set OPENAI_API_KEY in Vercel env vars.",
+    };
   }
 
   const validSizes = ["1024x1024", "1792x1024", "1024x1792"] as const;
@@ -35,7 +42,7 @@ export async function generateImageDalle(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: "dall-e-3",

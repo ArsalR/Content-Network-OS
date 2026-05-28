@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { db } from "@/lib/db";
 import { apiCalls } from "@/db/schema";
 import { computeCostUsd, getDefaultModel } from "@/lib/pricing";
-import { env } from "@/lib/env";
+import { getApiKey } from "@/lib/api-keys";
 
 type GenerateResult =
   | {
@@ -25,15 +25,21 @@ export async function generate(
     rawText?: boolean;
   }
 ): Promise<GenerateResult> {
-  if (!env.OPENAI_API_KEY) {
-    return { ok: false, error: "OpenAI API key not configured" };
+  // Resolve from DB-first (UI-set via /settings/api-keys) → env fallback.
+  const apiKey = await getApiKey("OPENAI_API_KEY");
+  if (!apiKey) {
+    return {
+      ok: false,
+      error:
+        "OpenAI API key not configured. Add it at Settings → API Keys, or set OPENAI_API_KEY in Vercel env vars.",
+    };
   }
 
   const modelName = options?.model ?? getDefaultModel();
   const driverId = options?.driverId ?? null;
   const systemPrompt = options?.systemPrompt;
 
-  const openaiProvider = createOpenAI({ apiKey: env.OPENAI_API_KEY });
+  const openaiProvider = createOpenAI({ apiKey });
 
   const startedAt = Date.now();
 

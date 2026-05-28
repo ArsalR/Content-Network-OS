@@ -362,3 +362,14 @@ export const webhookDeliveries = pgTable(
   },
   (t) => [index("webhook_deliveries_received_at_idx").on(t.receivedAt)]
 );
+
+// Per-deployment app-level settings (third-party API keys etc.). Key is
+// the env-var-style identifier (e.g. "OPENAI_API_KEY") so the resolver
+// can do a flat lookup. `value` is encrypted via lib/crypto (AES-256-GCM).
+// Always falls back to process.env at resolve time so existing Vercel-
+// env-var deployments keep working unchanged.
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});

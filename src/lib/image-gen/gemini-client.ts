@@ -1,4 +1,4 @@
-import { env } from "@/lib/env";
+import { getApiKey } from "@/lib/api-keys";
 
 type ImageGenResult =
   | { ok: true; imageBuffer: Buffer; mimeType: string }
@@ -18,11 +18,16 @@ export async function generateImageGemini(
   prompt: string,
   aspectRatioOverride?: string
 ): Promise<ImageGenResult> {
-  if (!env.GEMINI_API_KEY) {
-    return { ok: false, error: "Gemini API key not configured" };
+  const apiKey = await getApiKey("GEMINI_API_KEY");
+  if (!apiKey) {
+    return {
+      ok: false,
+      error:
+        "Gemini API key not configured. Add it at Settings → API Keys, or set GEMINI_API_KEY in Vercel env vars.",
+    };
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${env.GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${apiKey}`;
 
   const isValidRatio = (v: string): v is GeminiAspectRatio =>
     (VALID_GEMINI_ASPECT_RATIOS as readonly string[]).includes(v);

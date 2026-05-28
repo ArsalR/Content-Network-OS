@@ -1,4 +1,4 @@
-import { env } from "@/lib/env";
+import { getApiKey } from "@/lib/api-keys";
 
 export type PexelsPhoto = {
   id: number;
@@ -19,15 +19,20 @@ export async function searchPhotos(
   query: string,
   perPage = 12
 ): Promise<SearchResult> {
-  if (!env.PEXELS_API_KEY) {
-    return { ok: false, error: "Pexels API key not configured" };
+  const apiKey = await getApiKey("PEXELS_API_KEY");
+  if (!apiKey) {
+    return {
+      ok: false,
+      error:
+        "Pexels API key not configured. Add it at Settings → API Keys, or set PEXELS_API_KEY in Vercel env vars.",
+    };
   }
 
   const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${perPage}`;
 
   try {
     const res = await fetch(url, {
-      headers: { Authorization: env.PEXELS_API_KEY },
+      headers: { Authorization: apiKey },
       next: { revalidate: 0 },
     });
 
